@@ -7,8 +7,9 @@ use crypto_bigint::{
 };
 use crypto_primes::generate_safe_prime_with_rng;
 
+// This is insufficient in real life yet offers a sufficient message space for ever 512-bit curves
 #[cfg(test)]
-pub const PRIME_BITS: usize = 1024;
+pub const PRIME_BITS: usize = 768;
 #[cfg(not(test))]
 pub const PRIME_BITS: usize = 1536;
 pub const N_BITS: usize = PRIME_BITS * 2;
@@ -21,7 +22,7 @@ pub const N_2_LIMBS: usize = N_2_BITS / 64;
 
 #[derive(Clone)]
 pub struct PublicKey {
-  n: Uint<N_LIMBS>,
+  pub n: Uint<N_LIMBS>,
   g: Uint<N_LIMBS>,
 }
 
