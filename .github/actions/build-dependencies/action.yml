@@ -1,0 +1,8 @@
+name: build-dependencies
+description: Installs build dependencies
+
+runs:
+  using: "composite"
+  steps:
+    - name: Cache Rust
+      uses: Swatinem/rust-cache@a95ba195448af2da9b00fb742d14ffaaf3c21f43

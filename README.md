@@ -22,8 +22,8 @@ These can then form an ECDSA signature as follows, in our own notation:
 
 ```
 r = (xG).x.to_scalar()
-w = (H(m) * y) + (r * d)
-Publish w, z_i
+w_i = (H(m) * y) + (r * d)
+Publish w_i, z_i
 s = w / z
 ```
 

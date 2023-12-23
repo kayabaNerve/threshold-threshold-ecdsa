@@ -1,0 +1,77 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+
+      - name: Get nightly version to use
+        id: nightly
+        run: echo "version=$(cat .github/nightly-version)" >> $GITHUB_OUTPUT
+
+      - name: Build Dependencies
+        uses: ./.github/actions/build-dependencies
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install nightly rust
+        run: rustup toolchain install ${{ steps.nightly.outputs.version }} --profile minimal -t wasm32-unknown-unknown -c clippy
+
+      - name: Run Clippy
+        run: cargo +${{ steps.nightly.outputs.version }} clippy --all-features --all-targets -- -D warnings -A clippy::items_after_test_module
+
+      # Also verify the lockfile isn't dirty
+      # This happens when someone edits a Cargo.toml yet doesn't do anything
+      # which causes the lockfile to be updated
+      # The above clippy run will cause it to be updated, so checking there's
+      # no differences present now performs the desired check
+      - name: Verify lockfile
+        run: git diff | wc -l | grep -x "0"
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+
+      - name: Build Dependencies
+        uses: ./.github/actions/build-dependencies
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install the latest stable rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Run tests
+        run: cargo test --all-features
+
+  fmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+
+      - name: Get nightly version to use
+        id: nightly
+        run: echo "version=$(cat .github/nightly-version)" >> $GITHUB_OUTPUT
+
+      - name: Install nightly rust
+        run: rustup toolchain install ${{ steps.nightly.outputs.version }} --profile minimal -c rustfmt
+
+      - name: Run rustfmt
+        run: cargo +${{ steps.nightly.outputs.version }} fmt -- --check
+
+  machete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac
+      - name: Verify all dependencies are in use
+        run: |
+          cargo install cargo-machete
+          cargo machete
