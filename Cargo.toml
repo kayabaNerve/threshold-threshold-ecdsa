@@ -13,8 +13,12 @@ ciphersuite = { git = "https://github.com/serai-dex/serai", features = ["std", "
 elliptic-curve = "0.13"
 ecdsa = { version = "0.16", features = ["verifying", "hazmat"] }
 
-crypto-bigint = "0.5"
+crypto-bigint = { version = "0.5", features = ["extra-sizes"] }
 crypto-primes = "0.5"
+
+num-traits = "0.2"
+num-integer = "0.1"
+num-bigint = "0.4"
 
 [patch.crates-io]
 # https://github.com/rust-lang-nursery/lazy-static.rs/issues/201
@@ -25,3 +29,6 @@ generic-array = { opt-level = 3 }
 crypto-common = { opt-level = 3 }
 crypto-bigint = { opt-level = 3 }
 crypto-primes = { opt-level = 3 }
+num-traits = { opt-level = 3 }
+num-integer = { opt-level = 3 }
+num-bigint = { opt-level = 3 }
