@@ -38,20 +38,22 @@ to represent any arbitrary additive-sharing of the value `z` such that
 - `ciphertext_xy_i` = `ciphertext_x ** y_i` <- 1 round of communication
 - `ciphertext_z` = `Product(ciphertext_xy_i)`
 - `z_i` = `rand()` for i in 2 ..= t
-- `ciphertext_z_i` = `Enc(-z_i)` <- 1 round of communication
+- `ciphertext_z_i` = `Enc(-z_i)` <- 1 round of communication, parallelizable
+   with the above round
 - `ciphertext_z_1` = `Product(ciphertext_z, ciphertext_z_i)`
-- Send `1` decryption share for `ciphertext_z_1` if i in 2 ..= t <- 1 round of communication
+- Send `1` decryption share for `ciphertext_z_1` if i in 2 ..= t <- 1 round of
+  communication
 
 At this time, this does not describe a verifiable scheme yet a verifiable scheme
 is presumed to be possible to build on top.
 
-This achieves a 4-round protocol, so long as no additional rounds are needed for
+This achieves a 3-round protocol, so long as no additional rounds are needed for
 proofs, which performs a MtA-equivalent in *O(n)* time, not *O(n\*\*2)*,
 assuming the decryption process is so linear.
 
 ### Difficulties in Using Threshold Paillier (or Similar)
 
-Threshold RSA, which is the focus when discussing threshold-discrete-log
+Threshold RSA, which is the focus when discussing threshold discrete-log
 solutions, has been an incredibly difficult challenge. Section 1.1 of
 [Tiresias: Large Scale, Maliciously Secure Threshold Paillier](https://eprint.iacr.org/2023/998)
 provides an extensive overview of various schemes throughout history. They also
@@ -70,4 +72,27 @@ And then back to the original RSA DKG problem,
 [Improved Distributed RSA Key Generation Using the Miller-Rabin Test](https://eprint.iacr.org/2023/644)
 was a recent and notable paper (which is a citation in Tiresias).
 
-Accordingly, it's presumed the difficulties have been sufficiently overcome.
+While all of these show threshold discrete-log solutions are possible, they
+still:
+
+- Have an error rate
+- Take tens of minutes to generate at large scales
+- Take several thousands of lines of code
+
+This work uses class groups, whose keys are any integer in the multiplicative
+group for the modulus, and accordingly does not face such difficulties.
+
+### References
+
+- https://eprint.iacr.org/2015/047.pdf defined class groups
+- https://eprint.iacr.org/2022/1437.pdf applies class groups to a
+  threshold-encryption use-case
+
+### TODO:
+
+- Remove reliance on the Strong Root Assumption, if present and possible
+- DKG
+- Distributed decryption in linear time
+- Proofs (literal)
+- Clean code with a competent API
+- Proofs (theoretical)

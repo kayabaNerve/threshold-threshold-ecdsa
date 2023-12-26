@@ -15,6 +15,7 @@ const RHO_BITS: usize = 1828;
 
 const P_BITS: usize = 521;
 
+// https://eprint.iacr.org/2015/047 3.1 Proposition 1
 #[allow(non_snake_case)]
 fn L(m: BigUint, p_uint: &BigUint) -> BigInt {
   let m = BigInt::from(m.mod_floor(p_uint));
@@ -41,11 +42,11 @@ pub struct Element {
 }
 
 impl Element {
-  // https://eprint.iacr.org/2015/047 V.2
-  fn c(&self, delta: &BigInt) -> Option<BigInt> {
-    // b**2 - 4ac = delta
-    //  b**2 - delta = 4ac
-    let four_ac: BigInt = self.b.clone().pow(2u8) - delta;
+  // https://eprint.iacr.org/2015/047 B.2 provides this formula
+  fn c(&self, discriminant: &BigInt) -> Option<BigInt> {
+    // b**2 - 4ac = discriminant
+    //  b**2 - discriminant = 4ac
+    let four_ac: BigInt = self.b.clone().pow(2u8) - discriminant;
     if !(four_ac.clone() & BigInt::from(3u8)).is_zero() {
       None?
     }
@@ -58,8 +59,8 @@ impl Element {
   }
 
   // Algorithm 5.4.2 of A Course in Computational Algebraic Number Theory
-  fn reduce(self, delta: &BigInt) -> Self {
-    let mut c = self.c(delta).unwrap();
+  fn reduce(self, discriminant: &BigInt) -> Self {
+    let mut c = self.c(discriminant).unwrap();
     let Element { mut a, mut b } = self;
     let step_2 = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
       let two_a = a.clone() << 1;
@@ -87,12 +88,12 @@ impl Element {
       b = -b;
     }
     let res = Element { a, b };
-    assert_eq!(res.c(delta).unwrap(), c);
+    assert_eq!(res.c(discriminant).unwrap(), c);
     res
   }
 
   // Algorithm 5.4.7 of A Course in Computational Algebraic Number Theory
-  fn add(&self, other: &Self, delta: &BigInt) -> Self {
+  fn add(&self, other: &Self, discriminant: &BigInt) -> Self {
     // Step 1
     let (f1, f2) = if self.a > other.a { (other, self) } else { (self, other) };
     let s = (&f1.b + &f2.b) >> 1u8;
@@ -108,7 +109,7 @@ impl Element {
     let x2 = u;
     let y2 = -v;
 
-    let c2 = f2.c(delta).unwrap();
+    let c2 = f2.c(discriminant).unwrap();
     let v1 = &f1.a / &d1;
     let v2 = &f2.a / &d1;
     let r = ((&y1 * &y2 * &n) - (&x2 * &c2)).mod_floor(&v1);
@@ -117,28 +118,28 @@ impl Element {
     let c3 = ((&c2 * &d1) + (&r * (&f2.b + (v2 * &r)))) / v1;
 
     let res = Element { a: a3, b: b3 };
-    assert_eq!(res.c(delta).unwrap(), c3);
-    res.reduce(delta)
+    assert_eq!(res.c(discriminant).unwrap(), c3);
+    res.reduce(discriminant)
   }
 
-  fn double(&self, delta: &BigInt) -> Self {
-    self.add(self, delta)
+  fn double(&self, discriminant: &BigInt) -> Self {
+    self.add(self, discriminant)
   }
 
-  fn neg(self, delta: &BigInt) -> Self {
-    Self { a: self.a, b: -self.b }.reduce(delta)
+  fn neg(self, discriminant: &BigInt) -> Self {
+    Self { a: self.a, b: -self.b }.reduce(discriminant)
   }
 
-  fn mul(&self, pow: &BigUint, delta: &BigInt) -> Self {
+  fn mul(&self, pow: &BigUint, discriminant: &BigInt) -> Self {
     let mut res: Option<Self> = None;
     for b in 0 .. pow.bits() {
       let b = pow.bits() - 1 - b;
       if let Some(res) = &mut res {
-        *res = res.double(delta);
+        *res = res.double(discriminant);
       }
       if pow.bit(b) {
         if let Some(res) = &mut res {
-          *res = res.add(self, delta);
+          *res = res.add(self, discriminant);
         } else {
           res = Some(self.clone());
         }
@@ -151,11 +152,11 @@ impl Element {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Ciphertext(Element, Element);
 impl Ciphertext {
-  pub fn add_without_randomness(&self, other: &Ciphertext, delta: &BigInt) -> Self {
-    Ciphertext(self.0.add(&other.0, delta), self.1.add(&other.1, delta))
+  pub fn add_without_randomness(&self, other: &Ciphertext, discriminant: &BigInt) -> Self {
+    Ciphertext(self.0.add(&other.0, discriminant), self.1.add(&other.1, discriminant))
   }
-  pub fn mul_without_randomness(&self, scalar: &BigUint, delta: &BigInt) -> Self {
-    Ciphertext(self.0.mul(scalar, delta), self.1.mul(scalar, delta))
+  pub fn mul_without_randomness(&self, scalar: &BigUint, discriminant: &BigInt) -> Self {
+    Ciphertext(self.0.mul(scalar, discriminant), self.1.mul(scalar, discriminant))
   }
 }
 
@@ -265,11 +266,6 @@ impl ClassGroup {
     let B = quad_root;
     dbg!("Calculated ceil quad root of cube");
 
-    // N(am) = (L(m)**2 - delta_k) / 4
-    // swirl(am) = N(am), -L(m)p
-
-    // (p_square, L(m) * p)
-    // g = ([swirl(r**2)] ** p) * (f ** k)
     #[allow(non_snake_case)]
     let L = L(r.pow(2u8), &p) * BigInt::from(p.clone());
     let g_init = Element { a: p_square.into(), b: L };
