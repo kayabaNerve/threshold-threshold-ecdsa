@@ -24,8 +24,8 @@ fn L(m: BigUint, p_uint: &BigUint) -> BigInt {
   // Invert m over p
   let gcd = p.extended_gcd(&m);
   assert!(gcd.gcd.is_one());
-  let inverse = if gcd.y.sign() == Sign::Plus { gcd.y } else { p.clone() + gcd.y };
-  assert!((inverse.clone() * &m).mod_floor(&p).is_one());
+  let inverse = if gcd.y.sign() == Sign::Plus { gcd.y } else { &p + gcd.y };
+  assert!((&inverse * &m).mod_floor(&p).is_one());
   let inverse = inverse.to_biguint().unwrap();
 
   if inverse.is_odd() {
@@ -39,19 +39,20 @@ fn L(m: BigUint, p_uint: &BigUint) -> BigInt {
 pub struct Element {
   a: BigInt,
   b: BigInt,
+  c: BigInt,
 }
 
 impl Element {
   // https://eprint.iacr.org/2015/047 B.2 provides this formula
-  fn c(&self, discriminant: &BigInt) -> Option<BigInt> {
+  fn c(a: &BigInt, b: BigInt, discriminant: &BigInt) -> Option<BigInt> {
     // b**2 - 4ac = discriminant
     //  b**2 - discriminant = 4ac
-    let four_ac: BigInt = self.b.clone().pow(2u8) - discriminant;
-    if !(four_ac.clone() & BigInt::from(3u8)).is_zero() {
+    let four_ac: BigInt = b.pow(2u8) - discriminant;
+    if !(&four_ac & BigInt::from(3u8)).is_zero() {
       None?
     }
     let ac = four_ac >> 2u8;
-    let (res, rem) = ac.div_rem(&self.a);
+    let (res, rem) = ac.div_rem(a);
     if !rem.is_zero() {
       None?
     }
@@ -59,11 +60,10 @@ impl Element {
   }
 
   // Algorithm 5.4.2 of A Course in Computational Algebraic Number Theory
-  fn reduce(self, discriminant: &BigInt) -> Self {
-    let mut c = self.c(discriminant).unwrap();
-    let Element { mut a, mut b } = self;
+  pub fn reduce(self) -> Self {
+    let Element { mut a, mut b, mut c } = self;
     let step_2 = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
-      let two_a = a.clone() << 1;
+      let two_a = &*a << 1;
       let (mut q, mut r) = (b.div_euclid(&two_a), b.rem_euclid(&two_a));
       assert_eq!(*b, (&two_a * &q) + &r);
       if r > *a {
@@ -87,13 +87,11 @@ impl Element {
     if (a == c) && b.is_negative() {
       b = -b;
     }
-    let res = Element { a, b };
-    assert_eq!(res.c(discriminant).unwrap(), c);
-    res
+    Element { a, b, c }
   }
 
   // Algorithm 5.4.7 of A Course in Computational Algebraic Number Theory
-  fn add(&self, other: &Self, discriminant: &BigInt) -> Self {
+  pub fn add(&self, other: &Self) -> Self {
     // Step 1
     let (f1, f2) = if self.a > other.a { (other, self) } else { (self, other) };
     let s = (&f1.b + &f2.b) >> 1u8;
@@ -109,37 +107,34 @@ impl Element {
     let x2 = u;
     let y2 = -v;
 
-    let c2 = f2.c(discriminant).unwrap();
     let v1 = &f1.a / &d1;
     let v2 = &f2.a / &d1;
-    let r = ((&y1 * &y2 * &n) - (&x2 * &c2)).mod_floor(&v1);
+    let r = ((&y1 * &y2 * &n) - (&x2 * &f2.c)).mod_floor(&v1);
     let b3 = &f2.b + ((&v2 * &r) << 1u8);
     let a3 = &v1 * &v2;
-    let c3 = ((&c2 * &d1) + (&r * (&f2.b + (v2 * &r)))) / v1;
+    let c3 = ((&f2.c * &d1) + (&r * (&f2.b + (v2 * &r)))) / v1;
 
-    let res = Element { a: a3, b: b3 };
-    assert_eq!(res.c(discriminant).unwrap(), c3);
-    res.reduce(discriminant)
+    (Element { a: a3, b: b3, c: c3 }).reduce()
   }
 
-  fn double(&self, discriminant: &BigInt) -> Self {
-    self.add(self, discriminant)
+  pub fn double(&self) -> Self {
+    self.add(self)
   }
 
-  fn neg(self, discriminant: &BigInt) -> Self {
-    Self { a: self.a, b: -self.b }.reduce(discriminant)
+  pub fn neg(self) -> Self {
+    Self { a: self.a, b: -self.b, c: self.c }.reduce()
   }
 
-  fn mul(&self, pow: &BigUint, discriminant: &BigInt) -> Self {
+  pub fn mul(&self, pow: &BigUint) -> Self {
     let mut res: Option<Self> = None;
     for b in 0 .. pow.bits() {
       let b = pow.bits() - 1 - b;
       if let Some(res) = &mut res {
-        *res = res.double(discriminant);
+        *res = res.double();
       }
       if pow.bit(b) {
         if let Some(res) = &mut res {
-          *res = res.add(self, discriminant);
+          *res = res.add(self);
         } else {
           res = Some(self.clone());
         }
@@ -152,11 +147,11 @@ impl Element {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Ciphertext(Element, Element);
 impl Ciphertext {
-  pub fn add_without_randomness(&self, other: &Ciphertext, discriminant: &BigInt) -> Self {
-    Ciphertext(self.0.add(&other.0, discriminant), self.1.add(&other.1, discriminant))
+  pub fn add_without_randomness(&self, other: &Ciphertext) -> Self {
+    Ciphertext(self.0.add(&other.0), self.1.add(&other.1))
   }
-  pub fn mul_without_randomness(&self, scalar: &BigUint, discriminant: &BigInt) -> Self {
-    Ciphertext(self.0.mul(scalar, discriminant), self.1.mul(scalar, discriminant))
+  pub fn mul_without_randomness(&self, scalar: &BigUint) -> Self {
+    Ciphertext(self.0.mul(scalar), self.1.mul(scalar))
   }
 }
 
@@ -169,10 +164,6 @@ pub struct ClassGroup {
   delta_p: BigInt,
 }
 impl ClassGroup {
-  pub fn delta_p(&self) -> &BigInt {
-    &self.delta_p
-  }
-
   // https://eprint.iacr.org/2015/047 Figure 2
   // TODO: Replace with https://eprint.iacr.org/2021/291 Figure 2
   pub fn setup(rng: &mut (impl RngCore + CryptoRng), p: BigUint) -> Self {
@@ -186,12 +177,12 @@ impl ClassGroup {
       let q = generate_safe_prime_with_rng::<{ RHO_BITS / 64 }>(&mut *rng, None);
       let q = BigUint::from_bytes_be(q.to_be_bytes().as_ref());
       // p * q is congruent to -1 mod 4
-      if ((p.clone() * &q) & BigUint::from(3u8)) != BigUint::from(3u8) {
+      if ((&p * &q) & BigUint::from(3u8)) != BigUint::from(3u8) {
         continue;
       }
       // jacobi of p/q = -1
       let q_minus_one = &q - 1u8;
-      let exp = q_minus_one.clone() >> 1;
+      let exp = &q_minus_one >> 1;
       let res = p.modpow(&exp, &q);
       assert!((res.is_zero()) || (res.is_one()) || (res == q_minus_one));
       if res != q_minus_one {
@@ -205,12 +196,10 @@ impl ClassGroup {
     let delta_k = BigInt::from_biguint(Sign::Minus, &p * &q);
 
     let p_square = p.clone().pow(2u8);
-    let delta_p = delta_k.clone() * BigInt::from(p_square.clone());
-    let f = Element {
-      a: BigInt::from_biguint(Sign::Plus, p_square.clone()),
-      b: BigInt::from_biguint(Sign::Plus, p.clone()),
-    };
-    assert!(f.c(&delta_p).is_some());
+    let delta_p = &delta_k * BigInt::from(p_square.clone());
+    let f_a = BigInt::from_biguint(Sign::Plus, p_square.clone());
+    let f_b = BigInt::from_biguint(Sign::Plus, p.clone());
+    let f = Element { c: Element::c(&f_a, f_b.clone(), &delta_p).unwrap(), a: f_a, b: f_b };
 
     let r = loop {
       let r = generate_safe_prime_with_rng::<{ P_BITS / 64 }>(&mut *rng, None);
@@ -222,15 +211,14 @@ impl ClassGroup {
       let r_int = BigInt::from(r.clone());
 
       // jacobi of delta_k/r = 1
-      let r_minus_one = r_int.clone() - 1u8;
-      let exp = r_minus_one.clone() >> 1;
-      let res = delta_k.clone().mod_floor(&r_int).modpow(&exp, &r_int);
+      let r_minus_one = &r_int - 1u8;
+      let exp = &r_minus_one >> 1;
+      let res = delta_k.mod_floor(&r_int).modpow(&exp, &r_int);
       assert!((res.is_zero()) || (res.is_one()) || (res == r_minus_one));
       if res.is_one() {
         break r;
       }
     };
-    println!("Generated r");
 
     let k = loop {
       let mut k_bytes = vec![0; p.bits().div_ceil(8).try_into().unwrap()];
@@ -241,11 +229,9 @@ impl ClassGroup {
       }
       break k;
     };
-    dbg!("Generated k");
 
     let abs_delta_k_cubed: BigUint = delta_k.abs().to_biguint().unwrap().pow(3u8);
     let mut quad_root = abs_delta_k_cubed.nth_root(4);
-    dbg!("Calculated sqrts");
     // Make this a ceil quad root instead of a floor quad root with a binary search until overflow
     // TODO: Just use this from the get go, instead of the sqrt calls?
     let mut jump: BigUint = BigUint::from(1u8) << (((4096 + 2048) / 4) - 3);
@@ -264,21 +250,31 @@ impl ClassGroup {
     assert!(quad_root.clone().pow(4u8) >= abs_delta_k_cubed);
     #[allow(non_snake_case)]
     let B = quad_root;
-    dbg!("Calculated ceil quad root of cube");
 
     #[allow(non_snake_case)]
     let L = L(r.pow(2u8), &p) * BigInt::from(p.clone());
-    let g_init = Element { a: p_square.into(), b: L };
-    assert!(g_init.c(&delta_p).is_some());
-    let g = g_init.mul(&p, &delta_p).add(&f.mul(&k, &delta_p), &delta_p);
+    let g_init_a = p_square.into();
+    let g_init =
+      Element { c: Element::c(&g_init_a, L.clone(), &delta_p).unwrap(), a: g_init_a, b: L };
+    let g = g_init.mul(&p).add(&f.mul(&k));
 
-    ClassGroup { B, p, g, f: f.clone(), delta_p: delta_p.clone() }
+    ClassGroup { B, p, g, f, delta_p }
   }
 
-  pub fn key_gen(&self, rng: &mut (impl RngCore + CryptoRng)) -> (BigUint, Element) {
+  pub fn g(&self) -> &Element {
+    &self.g
+  }
+  pub fn f(&self) -> &Element {
+    &self.f
+  }
+  pub fn delta_p(&self) -> &BigInt {
+    &self.delta_p
+  }
+
+  pub fn sample_secret(&self, rng: &mut (impl RngCore + CryptoRng)) -> BigUint {
     #[allow(non_snake_case)]
     let Bp = &self.B * &self.p;
-    let x = loop {
+    loop {
       let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
       rng.fill_bytes(&mut bytes);
       let x = BigUint::from_bytes_be(&bytes);
@@ -286,9 +282,17 @@ impl ClassGroup {
         continue;
       }
       break x;
-    };
-    let h = self.g.mul(&x, &self.delta_p);
+    }
+  }
+
+  pub fn key_gen(&self, rng: &mut (impl RngCore + CryptoRng)) -> (BigUint, Element) {
+    let x = self.sample_secret(rng);
+    let h = self.g.mul(&x);
     (x, h)
+  }
+
+  pub fn private_key_bits(&self) -> u64 {
+    (&self.B * &self.p).bits()
   }
 
   pub fn encrypt(
@@ -297,20 +301,10 @@ impl ClassGroup {
     key: &Element,
     m: &BigUint,
   ) -> Ciphertext {
-    #[allow(non_snake_case)]
-    let Bp = &self.B * &self.p;
-    let r = loop {
-      let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
-      rng.fill_bytes(&mut bytes);
-      let r = BigUint::from_bytes_be(&bytes);
-      if r >= Bp {
-        continue;
-      }
-      break r;
-    };
+    let r = self.sample_secret(rng);
 
-    let c1 = self.g.mul(&r, &self.delta_p);
-    let c2 = self.f.mul(m, &self.delta_p).add(&key.mul(&r, &self.delta_p), &self.delta_p);
+    let c1 = self.g.mul(&r);
+    let c2 = self.f.mul(m).add(&key.mul(&r));
     Ciphertext(c1, c2)
   }
 
@@ -321,15 +315,13 @@ impl ClassGroup {
 
     let gcd = p.extended_gcd(&x.mod_floor(&p));
     assert!(gcd.gcd.is_one());
-    let inverse = if gcd.y.sign() == Sign::Plus { gcd.y } else { p.clone() + gcd.y };
-    assert!((inverse.clone() * &x).mod_floor(&p).is_one());
+    let inverse = if gcd.y.sign() == Sign::Plus { gcd.y } else { &p + gcd.y };
+    assert!((&inverse * &x).mod_floor(&p).is_one());
     Some(inverse.to_biguint().unwrap())
   }
 
   pub fn decrypt(&self, key: &BigUint, ciphertext: &Ciphertext) -> Option<BigUint> {
-    self.solve(
-      ciphertext.1.add(&ciphertext.0.mul(key, &self.delta_p).neg(&self.delta_p), &self.delta_p),
-    )
+    self.solve(ciphertext.1.add(&ciphertext.0.mul(key).neg()))
   }
 
   pub fn add(
@@ -339,22 +331,12 @@ impl ClassGroup {
     ciphertext: &Ciphertext,
     other: &Ciphertext,
   ) -> Ciphertext {
-    let mut res = ciphertext.add_without_randomness(other, &self.delta_p);
+    let mut res = ciphertext.add_without_randomness(other);
 
-    #[allow(non_snake_case)]
-    let Bp = &self.B * &self.p;
-    let r = loop {
-      let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
-      rng.fill_bytes(&mut bytes);
-      let r = BigUint::from_bytes_be(&bytes);
-      if r >= Bp {
-        continue;
-      }
-      break r;
-    };
+    let r = self.sample_secret(rng);
 
-    res.0 = res.0.add(&self.g.mul(&r, &self.delta_p), &self.delta_p);
-    res.1 = res.1.add(&public_key.mul(&r, &self.delta_p), &self.delta_p);
+    res.0 = res.0.add(&self.g.mul(&r));
+    res.1 = res.1.add(&public_key.mul(&r));
     res
   }
 
@@ -365,22 +347,12 @@ impl ClassGroup {
     ciphertext: &Ciphertext,
     scalar: &BigUint,
   ) -> Ciphertext {
-    let mut res = ciphertext.mul_without_randomness(scalar, &self.delta_p);
+    let mut res = ciphertext.mul_without_randomness(scalar);
 
-    #[allow(non_snake_case)]
-    let Bp = &self.B * &self.p;
-    let r = loop {
-      let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
-      rng.fill_bytes(&mut bytes);
-      let r = BigUint::from_bytes_be(&bytes);
-      if r >= Bp {
-        continue;
-      }
-      break r;
-    };
+    let r = self.sample_secret(rng);
 
-    res.0 = res.0.add(&self.g.mul(&r, &self.delta_p), &self.delta_p);
-    res.1 = res.1.add(&public_key.mul(&r, &self.delta_p), &self.delta_p);
+    res.0 = res.0.add(&self.g.mul(&r));
+    res.1 = res.1.add(&public_key.mul(&r));
     res
   }
 }
