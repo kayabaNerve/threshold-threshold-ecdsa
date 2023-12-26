@@ -5,6 +5,7 @@ use ciphersuite::{
 use elliptic_curve::point::AffineCoordinates;
 
 pub mod class_group;
+pub mod mpc;
 
 pub fn verify(
   public_key: <Secp256k1 as Ciphersuite>::G,
@@ -153,7 +154,7 @@ mod tests {
 
     let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
     for x_i_ciphertext in &x_i_ciphertexts {
-      x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext, cg.delta_p());
+      x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext);
     }
 
     let mut xy_i_ciphertexts = vec![];
@@ -170,7 +171,7 @@ mod tests {
 
     let mut z_ciphertext = xy_i_ciphertexts.pop().unwrap();
     for xy_ciphertext in &xy_i_ciphertexts {
-      z_ciphertext = z_ciphertext.add_without_randomness(xy_ciphertext, cg.delta_p());
+      z_ciphertext = z_ciphertext.add_without_randomness(xy_ciphertext);
     }
 
     let mut z_i = vec![];
@@ -186,7 +187,7 @@ mod tests {
     }
 
     for z_i_ciphertext in &z_i_ciphertexts {
-      z_ciphertext = z_ciphertext.add_without_randomness(z_i_ciphertext, cg.delta_p());
+      z_ciphertext = z_ciphertext.add_without_randomness(z_i_ciphertext);
     }
 
     let mut final_z_i = cg.decrypt(&private, &z_ciphertext).unwrap().to_bytes_be();
@@ -202,5 +203,23 @@ mod tests {
         <Secp256k1 as Ciphersuite>::F::from_repr(final_z_i_repr.into()).unwrap(),
       z,
     );
+  }
+
+  #[test]
+  fn integer_secret_sharing() {
+    use num_traits::*;
+
+    use class_group::*;
+    use mpc::IntegerSecretSharing;
+
+    const LIMBS: usize = 256 / 64;
+    let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
+    let mut secp256k1_mod = [0; LIMBS * 8];
+    secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
+    secp256k1_mod[(LIMBS * 8) - 1] += 1;
+    let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
+
+    let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
+    IntegerSecretSharing::new(&mut OsRng, &cg, 3, 4);
   }
 }
