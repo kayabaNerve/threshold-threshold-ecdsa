@@ -4,7 +4,6 @@ use ciphersuite::{
 };
 use elliptic_curve::point::AffineCoordinates;
 
-pub mod paillier;
 pub mod class_group;
 
 pub fn verify(
@@ -85,17 +84,23 @@ mod tests {
     assert_eq!(
       cg.decrypt(
         &private_key,
-        &cg
-          .encrypt(&mut OsRng, &public_key, &m1)
-          .add(&cg.encrypt(&mut OsRng, &public_key, &m2), cg.delta_p())
+        &cg.add(
+          &mut OsRng,
+          &public_key,
+          &cg.encrypt(&mut OsRng, &public_key, &m1),
+          &cg.encrypt(&mut OsRng, &public_key, &m2)
+        ),
       )
       .unwrap(),
       &m1 + &m2,
     );
 
     assert_eq!(
-      cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m1).mul(&m2, cg.delta_p()))
-        .unwrap(),
+      cg.decrypt(
+        &private_key,
+        &cg.mul(&mut OsRng, &public_key, &cg.encrypt(&mut OsRng, &public_key, &m1), &m2)
+      )
+      .unwrap(),
       (&m1 * &m2) % &secp256k1_mod,
     );
   }
@@ -148,20 +153,24 @@ mod tests {
 
     let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
     for x_i_ciphertext in &x_i_ciphertexts {
-      x_ciphertext = x_ciphertext.add(x_i_ciphertext, cg.delta_p());
+      x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext, cg.delta_p());
     }
 
     let mut xy_i_ciphertexts = vec![];
     for y in &y {
       let mut num_bytes = [0; 32];
       num_bytes.copy_from_slice(y.to_repr().as_ref());
-      // TODO: Should this include re-randomization? Probably
-      xy_i_ciphertexts.push(x_ciphertext.mul(&BigUint::from_bytes_be(&num_bytes), cg.delta_p()));
+      xy_i_ciphertexts.push(cg.mul(
+        &mut OsRng,
+        &public,
+        &x_ciphertext,
+        &BigUint::from_bytes_be(&num_bytes),
+      ));
     }
 
     let mut z_ciphertext = xy_i_ciphertexts.pop().unwrap();
     for xy_ciphertext in &xy_i_ciphertexts {
-      z_ciphertext = z_ciphertext.add(xy_ciphertext, cg.delta_p());
+      z_ciphertext = z_ciphertext.add_without_randomness(xy_ciphertext, cg.delta_p());
     }
 
     let mut z_i = vec![];
@@ -177,7 +186,7 @@ mod tests {
     }
 
     for z_i_ciphertext in &z_i_ciphertexts {
-      z_ciphertext = z_ciphertext.add(z_i_ciphertext, cg.delta_p());
+      z_ciphertext = z_ciphertext.add_without_randomness(z_i_ciphertext, cg.delta_p());
     }
 
     let mut final_z_i = cg.decrypt(&private, &z_ciphertext).unwrap().to_bytes_be();

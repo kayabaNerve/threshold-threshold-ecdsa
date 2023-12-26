@@ -151,10 +151,10 @@ impl Element {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Ciphertext(Element, Element);
 impl Ciphertext {
-  pub fn add(&self, other: &Ciphertext, delta: &BigInt) -> Self {
+  pub fn add_without_randomness(&self, other: &Ciphertext, delta: &BigInt) -> Self {
     Ciphertext(self.0.add(&other.0, delta), self.1.add(&other.1, delta))
   }
-  pub fn mul(&self, scalar: &BigUint, delta: &BigInt) -> Self {
+  pub fn mul_without_randomness(&self, scalar: &BigUint, delta: &BigInt) -> Self {
     Ciphertext(self.0.mul(scalar, delta), self.1.mul(scalar, delta))
   }
 }
@@ -334,5 +334,57 @@ impl ClassGroup {
     self.solve(
       ciphertext.1.add(&ciphertext.0.mul(key, &self.delta_p).neg(&self.delta_p), &self.delta_p),
     )
+  }
+
+  pub fn add(
+    &self,
+    rng: &mut (impl RngCore + CryptoRng),
+    public_key: &Element,
+    ciphertext: &Ciphertext,
+    other: &Ciphertext,
+  ) -> Ciphertext {
+    let mut res = ciphertext.add_without_randomness(other, &self.delta_p);
+
+    #[allow(non_snake_case)]
+    let Bp = &self.B * &self.p;
+    let r = loop {
+      let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
+      rng.fill_bytes(&mut bytes);
+      let r = BigUint::from_bytes_be(&bytes);
+      if r >= Bp {
+        continue;
+      }
+      break r;
+    };
+
+    res.0 = res.0.add(&self.g.mul(&r, &self.delta_p), &self.delta_p);
+    res.1 = res.1.add(&public_key.mul(&r, &self.delta_p), &self.delta_p);
+    res
+  }
+
+  pub fn mul(
+    &self,
+    rng: &mut (impl RngCore + CryptoRng),
+    public_key: &Element,
+    ciphertext: &Ciphertext,
+    scalar: &BigUint,
+  ) -> Ciphertext {
+    let mut res = ciphertext.mul_without_randomness(scalar, &self.delta_p);
+
+    #[allow(non_snake_case)]
+    let Bp = &self.B * &self.p;
+    let r = loop {
+      let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
+      rng.fill_bytes(&mut bytes);
+      let r = BigUint::from_bytes_be(&bytes);
+      if r >= Bp {
+        continue;
+      }
+      break r;
+    };
+
+    res.0 = res.0.add(&self.g.mul(&r, &self.delta_p), &self.delta_p);
+    res.1 = res.1.add(&public_key.mul(&r, &self.delta_p), &self.delta_p);
+    res
   }
 }
