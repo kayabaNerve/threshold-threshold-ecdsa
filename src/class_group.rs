@@ -169,7 +169,7 @@ impl Element {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Ciphertext(Element, Element);
+pub struct Ciphertext(pub(crate) Element, pub(crate) Element);
 impl Ciphertext {
   pub fn add_without_randomness(&self, other: &Ciphertext) -> Self {
     Ciphertext(self.0.add(&other.0), self.1.add(&other.1))
@@ -283,6 +283,9 @@ impl ClassGroup {
     ClassGroup { B, p, g, f, delta_p }
   }
 
+  pub fn bound(&self) -> &BigUint {
+    &self.B
+  }
   pub fn p(&self) -> &BigUint {
     &self.p
   }
@@ -296,6 +299,11 @@ impl ClassGroup {
     &self.delta_p
   }
 
+  // Sample a secret from the upper bound for the order multiplied by the prime field messages are
+  // over, as specified in the original 2015-047 paper.
+  //
+  // Future papers frequently specify to sample B * 2**d, where d is the statistical distance
+  // tolerance. Please be aware of this distinction.
   pub fn sample_secret(&self, rng: &mut (impl RngCore + CryptoRng)) -> BigUint {
     #[allow(non_snake_case)]
     let Bp = &self.B * &self.p;
@@ -317,12 +325,12 @@ impl ClassGroup {
     rng: &mut (impl RngCore + CryptoRng),
     key: &Element,
     m: &BigUint,
-  ) -> Ciphertext {
+  ) -> (BigUint, Ciphertext) {
     let r = self.sample_secret(rng);
 
     let c1 = self.g.mul(&r);
     let c2 = self.f.mul(m).add(&key.mul(&r));
-    Ciphertext(c1, c2)
+    (r, Ciphertext(c1, c2))
   }
 
   #[allow(non_snake_case)]
@@ -372,4 +380,54 @@ impl ClassGroup {
     res.1 = res.1.add(&public_key.mul(&r));
     res
   }
+}
+
+#[test]
+fn class_group() {
+  use rand_core::OsRng;
+
+  use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
+
+  const LIMBS: usize = 256 / 64;
+  let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
+  let mut secp256k1_mod = [0; LIMBS * 8];
+  secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
+  secp256k1_mod[(LIMBS * 8) - 1] += 1;
+  let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
+
+  let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
+  let (private_key, public_key) = cg.key_gen(&mut OsRng);
+
+  let mut m1 = vec![0; 31];
+  OsRng.fill_bytes(&mut m1);
+  let m1 = num_bigint::BigUint::from_be_bytes(&m1);
+  assert_eq!(cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m1).1).unwrap(), m1);
+
+  let mut m2 = vec![0; 31];
+  OsRng.fill_bytes(&mut m2);
+  let m2 = num_bigint::BigUint::from_be_bytes(&m2);
+  assert_eq!(cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m2).1).unwrap(), m2);
+
+  assert_eq!(
+    cg.decrypt(
+      &private_key,
+      &cg.add(
+        &mut OsRng,
+        &public_key,
+        &cg.encrypt(&mut OsRng, &public_key, &m1).1,
+        &cg.encrypt(&mut OsRng, &public_key, &m2).1,
+      ),
+    )
+    .unwrap(),
+    &m1 + &m2,
+  );
+
+  assert_eq!(
+    cg.decrypt(
+      &private_key,
+      &cg.mul(&mut OsRng, &public_key, &cg.encrypt(&mut OsRng, &public_key, &m1).1, &m2)
+    )
+    .unwrap(),
+    (&m1 * &m2) % &secp256k1_mod,
+  );
 }

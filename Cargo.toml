@@ -7,8 +7,6 @@ edition = "2021"
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
 rand_chacha = "0.3"
 
-subtle = "2"
-
 transcript = { package = "flexible-transcript", git = "https://github.com/serai-dex/serai" }
 
 k256 = "0.13"

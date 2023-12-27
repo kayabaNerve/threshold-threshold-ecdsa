@@ -50,7 +50,7 @@ pub fn verify(
 
 #[cfg(test)]
 mod tests {
-  use rand_core::{RngCore, OsRng};
+  use rand_core::OsRng;
   use crypto_bigint::*;
   use ciphersuite::group::ff::Field;
   use super::*;
@@ -72,55 +72,6 @@ mod tests {
     let s = w * z.invert().unwrap();
 
     verify(Secp256k1::generator() * private_key, m1_hash, r, s);
-  }
-
-  #[test]
-  fn class_group() {
-    use num_traits::*;
-    use class_group::*;
-
-    const LIMBS: usize = 256 / 64;
-    let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
-    let mut secp256k1_mod = [0; LIMBS * 8];
-    secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
-    secp256k1_mod[(LIMBS * 8) - 1] += 1;
-    let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
-
-    let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
-    let (private_key, public_key) = cg.key_gen(&mut OsRng);
-
-    let mut m1 = vec![0; 31];
-    OsRng.fill_bytes(&mut m1);
-    let m1 = num_bigint::BigUint::from_be_bytes(&m1);
-    assert_eq!(cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m1)).unwrap(), m1);
-
-    let mut m2 = vec![0; 31];
-    OsRng.fill_bytes(&mut m2);
-    let m2 = num_bigint::BigUint::from_be_bytes(&m2);
-    assert_eq!(cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m2)).unwrap(), m2);
-
-    assert_eq!(
-      cg.decrypt(
-        &private_key,
-        &cg.add(
-          &mut OsRng,
-          &public_key,
-          &cg.encrypt(&mut OsRng, &public_key, &m1),
-          &cg.encrypt(&mut OsRng, &public_key, &m2)
-        ),
-      )
-      .unwrap(),
-      &m1 + &m2,
-    );
-
-    assert_eq!(
-      cg.decrypt(
-        &private_key,
-        &cg.mul(&mut OsRng, &public_key, &cg.encrypt(&mut OsRng, &public_key, &m1), &m2)
-      )
-      .unwrap(),
-      (&m1 * &m2) % &secp256k1_mod,
-    );
   }
 
   #[test]
@@ -166,7 +117,7 @@ mod tests {
     for x in &x {
       let mut num_bytes = [0; 32];
       num_bytes.copy_from_slice(x.to_repr().as_ref());
-      x_i_ciphertexts.push(cg.encrypt(&mut OsRng, &public, &BigUint::from_bytes_be(&num_bytes)));
+      x_i_ciphertexts.push(cg.encrypt(&mut OsRng, &public, &BigUint::from_bytes_be(&num_bytes)).1);
     }
 
     let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
@@ -200,7 +151,7 @@ mod tests {
     for z_i in &z_i {
       let mut num_bytes = [0; 32];
       num_bytes.copy_from_slice((-z_i).to_repr().as_ref());
-      z_i_ciphertexts.push(cg.encrypt(&mut OsRng, &public, &BigUint::from_bytes_be(&num_bytes)));
+      z_i_ciphertexts.push(cg.encrypt(&mut OsRng, &public, &BigUint::from_bytes_be(&num_bytes)).1);
     }
 
     for z_i_ciphertext in &z_i_ciphertexts {
@@ -220,47 +171,5 @@ mod tests {
         <Secp256k1 as Ciphersuite>::F::from_repr(final_z_i_repr.into()).unwrap(),
       z,
     );
-  }
-
-  #[test]
-  fn dlog_without_subgroup() {
-    use num_traits::*;
-
-    use transcript::{Transcript, RecommendedTranscript};
-
-    use class_group::*;
-    use proofs::ZkDlogWithoutSubgroupProof;
-
-    const LIMBS: usize = 256 / 64;
-    let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
-    let mut secp256k1_mod = [0; LIMBS * 8];
-    secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
-    secp256k1_mod[(LIMBS * 8) - 1] += 1;
-    let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
-
-    let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
-    let (private_key, public_key) = cg.key_gen(&mut OsRng);
-    let transcript = || RecommendedTranscript::new(b"DLog Without Subgroup Proof Test");
-    ZkDlogWithoutSubgroupProof::prove(&mut OsRng, &cg, &mut transcript(), &private_key)
-      .verify(&cg, &mut transcript(), &public_key)
-      .unwrap();
-  }
-
-  #[test]
-  fn integer_secret_sharing() {
-    use num_traits::*;
-
-    use class_group::*;
-    use mpc::IntegerSecretSharing;
-
-    const LIMBS: usize = 256 / 64;
-    let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
-    let mut secp256k1_mod = [0; LIMBS * 8];
-    secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
-    secp256k1_mod[(LIMBS * 8) - 1] += 1;
-    let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
-
-    let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
-    IntegerSecretSharing::new(&mut OsRng, &cg, 3, 4);
   }
 }
