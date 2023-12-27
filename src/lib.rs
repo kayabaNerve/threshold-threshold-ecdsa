@@ -103,6 +103,7 @@ mod tests {
     }
     let mut delta = None;
     let mut public_key: Option<Element> = None;
+    let mut verification_shares = HashMap::new();
     for _ in 1u16 ..= 4u16 {
       let iss = IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), 3, 4);
       if delta.is_none() {
@@ -111,8 +112,30 @@ mod tests {
       assert_eq!(delta.as_ref(), Some(&iss.delta));
       let contribution = &iss.commitments[0].commitment;
       if let Some(public_key) = &mut public_key {
+        for i in 1u16 ..= 4u16 {
+          let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
+          #[allow(non_snake_case)]
+          for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
+            let C_i = C_i + 1;
+            let i = BigUint::from(i);
+            eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
+          }
+          let existing: &mut Element = verification_shares.get_mut(&i).unwrap();
+          let new = existing.add(&eval);
+          *existing = new;
+        }
         *public_key = public_key.add(contribution);
       } else {
+        for i in 1u16 ..= 4u16 {
+          let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
+          #[allow(non_snake_case)]
+          for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
+            let C_i = C_i + 1;
+            let i = BigUint::from(i);
+            eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
+          }
+          verification_shares.insert(i, eval);
+        }
         public_key = Some(contribution.clone());
       }
       for (i, share) in iss.shares {
@@ -179,7 +202,7 @@ mod tests {
 
       // Prove this was correctly scaled
       let proof = ZkDlogEqualityProof::prove(&mut OsRng, &cg, &mut transcript(), &x_ciphertext.0, &x_ciphertext.1, &scalar);
-      proof.verify(&cg, &mut transcript(), &x_ciphertext.0, &x_ciphertext.1, &xy_i_ciphertext.0, &xy_i_ciphertext.1).unwrap();
+      proof.verify(&cg, &mut transcript(), cg.p(), &x_ciphertext.0, &x_ciphertext.1, &xy_i_ciphertext.0, &xy_i_ciphertext.1).unwrap();
       xy_i_ciphertexts.push(xy_i_ciphertext);
     }
     let y = y_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::F>();
@@ -215,6 +238,17 @@ mod tests {
     for i in 2u16 ..= 3 {
       #[allow(non_snake_case)]
       let W_i = z_ciphertext.0.mul(&(&shares[&i] * &delta));
+
+      // Prove this is a correct decryption share
+      let coefficient_size = BigUint::one() << cg.secret_bits();
+      // Coefficient 0 is of size coefficient * delta
+      // Coefficient t for t != 0 is of size coefficient * n.pow(n)
+      // There are t-1 such coefficients
+
+      let share_max_size = (&coefficient_size * &delta) + ((&coefficient_size * BigUint::from(4u16).pow(4u16)) * BigUint::from(3u16 - 1));
+      let proof = ZkDlogEqualityProof::prove(&mut OsRng, &cg, &mut transcript(), cg.g(), &z_ciphertext.0, &(&shares[&i] * &delta));
+      proof.verify(&cg, &mut transcript(), &share_max_size, cg.g(), &z_ciphertext.0, &verification_shares[&i], &W_i).unwrap();
+
       // Technically, the lagrange coefficient can be applied after collecting shares
       // The provided lagrange function inlines the delta multiplication so it can return a single
       // value, so to post-include the lagrange would be to include delta twice (as delta must be
@@ -229,7 +263,6 @@ mod tests {
         W_i.mul(&lagrange.to_biguint().unwrap())
       };
       W_is.push(W_i);
-      // TODO: Proof of DLEq for verification share and w_i
     }
 
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what

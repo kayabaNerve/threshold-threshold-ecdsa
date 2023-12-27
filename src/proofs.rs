@@ -246,8 +246,7 @@ impl ZkEncryptionProof {
   }
 }
 
-// https://eprint.iacr.org/2022/1437 Section 5.2 where n = 2 and m = 1 for 0 <= w < cg.p()
-// S = cg.p()
+// https://eprint.iacr.org/2022/1437 Section 5.2 where n = 2 and m = 1 for 0 <= w < S
 // A = cg.secret_bound()
 // c = 2 ** 256
 #[allow(non_snake_case)]
@@ -266,6 +265,7 @@ impl ZkDlogEqualityProof {
     BigUint::from_bytes_be(&transcript.challenge(b"c").as_ref()[.. 32])
   }
 
+  #[allow(non_snake_case)]
   pub fn prove(
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
@@ -285,25 +285,26 @@ impl ZkDlogEqualityProof {
     let u = r + (c * dlog);
     ZkDlogEqualityProof { T0, T1, u }
   }
-  #[allow(clippy::result_unit_err)]
+  #[allow(non_snake_case, clippy::result_unit_err)]
   pub fn verify(
     &self,
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
+    S: &BigUint,
     generator_0: &Element,
     generator_1: &Element,
     element_0: &Element,
     element_1: &Element,
   ) -> Result<(), ()> {
-    if self.u > ((cg.p() * &(BigUint::one() << 256)) + cg.secret_bound()) {
-      dbg!(Err(()))?
+    if self.u > ((S * &(BigUint::one() << 256)) + cg.secret_bound()) {
+      Err(())?
     }
     let c = Self::transcript_Ts(transcript, &self.T0, &self.T1);
     if self.T0.add(&element_0.mul(&c)) != generator_0.mul(&self.u) {
-      dbg!(Err(()))?
+      Err(())?
     }
     if self.T1.add(&element_1.mul(&c)) != generator_1.mul(&self.u) {
-      dbg!(Err(()))?
+      Err(())?
     }
     Ok(())
   }
@@ -398,6 +399,7 @@ fn dleq() {
     .verify(
       &cg,
       &mut transcript(),
+      cg.p(),
       &ciphertext.0,
       &ciphertext.1,
       &ciphertext.0.mul(&dlog),
