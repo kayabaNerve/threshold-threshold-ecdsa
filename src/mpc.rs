@@ -55,7 +55,7 @@ impl IntegerSecretSharing {
     let mut gen_coefficient = || {
       // TODO: This uses the same size for all coefficients
       // 2022-1437 distinguishes secret size and coefficient size.
-      let secret_bits = cg.private_key_bits() - 1;
+      let secret_bits = cg.secret_bits() - 1;
       let mut secret = vec![0; secret_bits.div_ceil(8).try_into().unwrap()];
       rng.fill_bytes(&mut secret);
       secret[0] &= 0xff >> (8 - (secret_bits % 8));

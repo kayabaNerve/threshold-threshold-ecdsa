@@ -85,6 +85,7 @@ mod tests {
     use num_bigint::{Sign, BigInt};
 
     use class_group::*;
+    use proofs::*;
     use mpc::*;
 
     const LIMBS: usize = 256 / 64;
@@ -123,20 +124,30 @@ mod tests {
     dbg!("Shimmed key gen");
 
     // Round 1: Publish additive shares of the nonce
-    // TODO: Doesn't this also need the point representing the additive share and a proof of
-    // equivalence?
     let mut x_is = vec![];
+    #[allow(non_snake_case)]
+    let mut X_is = vec![];
     let mut x_i_ciphertexts = vec![];
     for _ in 0 .. 3 {
       let mut num_bytes = [0; 32];
       let x_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
       num_bytes.copy_from_slice(x_i.to_repr().as_ref());
       x_is.push(x_i);
-      x_i_ciphertexts
-        .push(cg.encrypt(&mut OsRng, &public_key, &BigUint::from_bytes_be(&num_bytes)).1);
-      // TODO: ZK proof of ciphertext validity (already in proofs.rs)
+
+      #[allow(non_snake_case)]
+      let X = <Secp256k1 as Ciphersuite>::generator() * x_i;
+      X_is.push(<Secp256k1 as Ciphersuite>::generator() * x_i);
+
+      let message = BigUint::from_bytes_be(&num_bytes);
+      // TODO: Replace this ciphertext validity proof with 2020-084 Fig 7, as comprehensive to X_i
+      let (ciphertext, proof) =
+        ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &message);
+      proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
+      x_i_ciphertexts.push(ciphertext);
     }
-    let x = x_is.iter().sum::<<Secp256k1 as Ciphersuite>::F>();
+    let x = x_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::F>();
+    #[allow(non_snake_case)]
+    let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
 
     // Everyone now calculates the sum nonce
     let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
@@ -152,15 +163,26 @@ mod tests {
       let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
       num_bytes.copy_from_slice(y_i.to_repr().as_ref());
       y_is.push(y_i);
-      xy_i_ciphertexts.push(cg.mul(
-        &mut OsRng,
-        &public_key,
-        &x_ciphertext,
-        &BigUint::from_bytes_be(&num_bytes),
-      ));
-      // TODO: ZK proof of exponent
+      // If x_ciphertext has no randomness, this would immediately allow decryption, leaking our
+      // y_i
+      // x_ciphertext does have randomness from every participant participating (including
+      // ourselves)
+      // This randomness will also never be revealed
+      // The eventual decryption of the remaining z_i value is after re-randomization by each
+      // substractive share
+      // This re-randomization doesn't include new randomness from signer i == 1, meaning a
+      // malicious t-1 may give the decryptor this randomness, leaking all prior values
+      // For the decryptor to notice and do so would require they also be malicious, preserving the
+      // t threshold
+      let scalar = BigUint::from_bytes_be(&num_bytes);
+      let xy_i_ciphertext = x_ciphertext.mul_without_randomness(&scalar);
+
+      // Prove this was correctly scaled
+      let proof = ZkDlogEqualityProof::prove(&mut OsRng, &cg, &mut transcript(), &x_ciphertext.0, &x_ciphertext.1, &scalar);
+      proof.verify(&cg, &mut transcript(), &x_ciphertext.0, &x_ciphertext.1, &xy_i_ciphertext.0, &xy_i_ciphertext.1).unwrap();
+      xy_i_ciphertexts.push(xy_i_ciphertext);
     }
-    let y = y_is.iter().sum::<<Secp256k1 as Ciphersuite>::F>();
+    let y = y_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::F>();
 
     // Also, for signers i != 0, publish the subtractive shares
     let mut z_is = vec![];
@@ -170,9 +192,11 @@ mod tests {
       let z_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
       num_bytes.copy_from_slice((-z_i).to_repr().as_ref());
       z_is.push(z_i);
-      z_i_ciphertexts
-        .push(cg.encrypt(&mut OsRng, &public_key, &BigUint::from_bytes_be(&num_bytes)).1);
-      // TODO: ZK proof of ciphertext validity (already in proofs.rs)
+      let message = BigUint::from_bytes_be(&num_bytes);
+      let (ciphertext, proof) =
+        ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &message);
+      proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
+      z_i_ciphertexts.push(ciphertext);
     }
 
     // Everyone now calculates xy and the sum of the posted subtractive shares
@@ -195,6 +219,8 @@ mod tests {
       // The provided lagrange function inlines the delta multiplication so it can return a single
       // value, so to post-include the lagrange would be to include delta twice (as delta must be
       // included here)
+      // While we could rewrite the lagrange function to return a (numerator, denominator), we
+      // don't need post-determinism of the lagrange coefficient
       let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
       #[allow(non_snake_case)]
       let W_i = if lagrange < BigInt::zero() {

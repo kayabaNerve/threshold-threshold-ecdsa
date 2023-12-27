@@ -299,6 +299,13 @@ impl ClassGroup {
     &self.delta_p
   }
 
+
+  // Returns the upper bound for the order multiplied by the prime field messages are over, as used
+  // as the bound for secrets by the original 2015-047 paper.
+  pub fn secret_bound(&self) -> BigUint {
+    &self.B * &self.p
+  }
+
   // Sample a secret from the upper bound for the order multiplied by the prime field messages are
   // over, as specified in the original 2015-047 paper.
   //
@@ -306,7 +313,7 @@ impl ClassGroup {
   // tolerance. Please be aware of this distinction.
   pub fn sample_secret(&self, rng: &mut (impl RngCore + CryptoRng)) -> BigUint {
     #[allow(non_snake_case)]
-    let Bp = &self.B * &self.p;
+    let Bp = self.secret_bound();
     crate::sample_number_less_than(rng, &Bp)
   }
 
@@ -316,7 +323,7 @@ impl ClassGroup {
     (x, h)
   }
 
-  pub fn private_key_bits(&self) -> u64 {
+  pub fn secret_bits(&self) -> u64 {
     (&self.B * &self.p).bits()
   }
 

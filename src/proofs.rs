@@ -246,14 +246,65 @@ impl ZkEncryptionProof {
   }
 }
 
-// TODO
-pub struct ZkDlogProof {}
-impl ZkDlogProof {
-  pub fn prove() -> Self {
-    ZkDlogProof {}
+// https://eprint.iacr.org/2022/1437 Section 5.2 where n = 2 and m = 1 for 0 <= w < cg.p()
+// S = cg.p()
+// A = cg.secret_bound()
+// c = 2 ** 256
+#[allow(non_snake_case)]
+pub struct ZkDlogEqualityProof {
+  T0: Element,
+  T1: Element,
+  u: BigUint,
+}
+impl ZkDlogEqualityProof {
+  #[allow(non_snake_case)]
+  fn transcript_Ts(transcript: &mut impl Transcript, T0: &Element, T1: &Element) -> BigUint {
+    transcript.domain_separate(b"ZkDlogEqualityProof");
+    T0.transcript(b"T0", transcript);
+    T1.transcript(b"T1", transcript);
+    // Any 256-bit number should work as a challenge
+    BigUint::from_bytes_be(&transcript.challenge(b"c").as_ref()[.. 32])
+  }
+
+  pub fn prove(
+    rng: &mut (impl RngCore + CryptoRng),
+    cg: &ClassGroup,
+    transcript: &mut impl Transcript,
+    generator_0: &Element,
+    generator_1: &Element,
+    dlog: &BigUint,
+  ) -> Self {
+    // X = [generator_0, generator_1]
+    // w = [dlog]
+    let r = cg.sample_secret(rng);
+    #[allow(non_snake_case)]
+    let T0 = generator_0.mul(&r);
+    #[allow(non_snake_case)]
+    let T1 = generator_1.mul(&r);
+    let c = Self::transcript_Ts(transcript, &T0, &T1);
+    let u = r + (c * dlog);
+    ZkDlogEqualityProof { T0, T1, u }
   }
   #[allow(clippy::result_unit_err)]
-  pub fn verify(&self) -> Result<(), ()> {
+  pub fn verify(
+    &self,
+    cg: &ClassGroup,
+    transcript: &mut impl Transcript,
+    generator_0: &Element,
+    generator_1: &Element,
+    element_0: &Element,
+    element_1: &Element,
+  ) -> Result<(), ()> {
+    if self.u > ((cg.p() * &(BigUint::one() << 256)) + cg.secret_bound()) {
+      dbg!(Err(()))?
+    }
+    let c = Self::transcript_Ts(transcript, &self.T0, &self.T1);
+    if self.T0.add(&element_0.mul(&c)) != generator_0.mul(&self.u) {
+      dbg!(Err(()))?
+    }
+    if self.T1.add(&element_1.mul(&c)) != generator_1.mul(&self.u) {
+      dbg!(Err(()))?
+    }
     Ok(())
   }
 }
@@ -306,4 +357,51 @@ fn encryption() {
     ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &m1);
   proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
   assert_eq!(cg.decrypt(&private_key, &ciphertext).unwrap(), m1);
+}
+
+#[test]
+fn dleq() {
+  use rand_core::OsRng;
+  use transcript::RecommendedTranscript;
+
+  use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
+
+  const LIMBS: usize = 256 / 64;
+  let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
+  let mut secp256k1_mod = [0; LIMBS * 8];
+  secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
+  secp256k1_mod[(LIMBS * 8) - 1] += 1;
+  let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
+
+  let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
+  let (_, public_key) = cg.key_gen(&mut OsRng);
+
+  let mut m1 = vec![0; 31];
+  OsRng.fill_bytes(&mut m1);
+  let m1 = num_bigint::BigUint::from_be_bytes(&m1);
+  let ciphertext = cg.encrypt(&mut OsRng, &public_key, &m1).1;
+
+  let transcript = || RecommendedTranscript::new(b"Discrete Log Equality Proof Test");
+
+  let mut dlog = vec![0; 31];
+  OsRng.fill_bytes(&mut dlog);
+  let dlog = num_bigint::BigUint::from_be_bytes(&dlog);
+  let proof = ZkDlogEqualityProof::prove(
+    &mut OsRng,
+    &cg,
+    &mut transcript(),
+    &ciphertext.0,
+    &ciphertext.1,
+    &dlog,
+  );
+  proof
+    .verify(
+      &cg,
+      &mut transcript(),
+      &ciphertext.0,
+      &ciphertext.1,
+      &ciphertext.0.mul(&dlog),
+      &ciphertext.1.mul(&dlog),
+    )
+    .unwrap();
 }
