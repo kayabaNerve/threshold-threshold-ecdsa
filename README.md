@@ -91,8 +91,6 @@ group for the modulus, and accordingly does not face such difficulties.
 ### TODO:
 
 - Remove reliance on the Strong Root Assumption, if present and possible
-- DKG
-- Distributed decryption in linear time
 - Proofs (literal)
 - Clean code with a competent API
 - Proofs (theoretical)

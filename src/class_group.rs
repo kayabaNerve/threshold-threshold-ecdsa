@@ -334,7 +334,7 @@ impl ClassGroup {
   }
 
   #[allow(non_snake_case)]
-  fn solve(&self, X: Element) -> Option<BigUint> {
+  pub(crate) fn solve(&self, X: Element) -> Option<BigUint> {
     let p = BigInt::from(self.p.clone());
     let x = &X.b / &p;
 

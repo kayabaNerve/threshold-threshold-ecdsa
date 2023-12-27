@@ -3,14 +3,14 @@ use std::collections::HashMap;
 use rand_core::{RngCore, CryptoRng};
 
 use num_traits::One;
-use num_bigint::BigUint;
+use num_bigint::{Sign, BigUint, BigInt};
 
 use transcript::Transcript;
 
 use crate::{class_group::*, proofs::*};
 
 pub struct CommitmentWithProof {
-  commitment: Element,
+  pub(crate) commitment: Element,
   proof: ZkDlogOutsideSubgroupProof,
 }
 
@@ -33,10 +33,18 @@ impl CommitmentWithProof {
 
 // TODO: Review the impact of 2022-1437 Remark 7 on the below
 pub struct IntegerSecretSharing {
-  commitments: Vec<CommitmentWithProof>,
-  shares: HashMap<u16, BigUint>,
+  pub(crate) delta: BigUint,
+  pub(crate) commitments: Vec<CommitmentWithProof>,
+  pub(crate) shares: HashMap<u16, BigUint>,
 }
 impl IntegerSecretSharing {
+  fn delta(n: u16) -> BigUint {
+    let mut accum = BigUint::one();
+    for i in 2 ..= n {
+      accum *= i;
+    }
+    accum
+  }
   pub fn new(
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
@@ -55,13 +63,7 @@ impl IntegerSecretSharing {
     };
 
     let alpha = gen_coefficient();
-    let delta = {
-      let mut accum = BigUint::one();
-      for i in 2 ..= n {
-        accum *= i;
-      }
-      accum
-    };
+    let delta = Self::delta(n);
     let alpha_tilde = &alpha * &delta;
 
     let mut r = vec![];
@@ -98,12 +100,28 @@ impl IntegerSecretSharing {
       #[allow(non_snake_case)]
       for (C_i, C) in commitments[1 ..].iter().enumerate() {
         let C_i = C_i + 1;
-        eval = eval.add(&C.commitment.mul(&i.pow(C_i.try_into().unwrap()).into()));
+        let i = BigUint::from(*i);
+        eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
       }
       assert_eq!(cg.g().mul(&(y * &delta)), eval);
     }
 
-    IntegerSecretSharing { commitments, shares: y }
+    IntegerSecretSharing { delta, commitments, shares: y }
+  }
+
+  pub fn lagrange(n: u16, i: u16, set: &[u16]) -> BigInt {
+    let mut numerator = Self::delta(n);
+    let mut denominator = BigInt::one();
+    for j in set {
+      let j = *j;
+      if i == j {
+        continue;
+      }
+      numerator *= j;
+      denominator *= i32::from(j) - i32::from(i);
+    }
+    let numerator = BigInt::from_biguint(Sign::Plus, numerator);
+    numerator / denominator
   }
 }
 
@@ -112,7 +130,7 @@ fn integer_secret_sharing() {
   use rand_core::OsRng;
   use transcript::RecommendedTranscript;
 
-  use num_traits::FromBytes;
+  use num_traits::{Zero, FromBytes};
 
   use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
 
@@ -125,5 +143,16 @@ fn integer_secret_sharing() {
 
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let transcript = || RecommendedTranscript::new(b"Integer Secret Sharing Test");
-  IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), 3, 4);
+  let iss = IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), 3, 4);
+
+  let mut reconstructed = BigInt::zero();
+  let set = [1u16, 2, 4];
+  for i in set {
+    reconstructed += BigInt::from_biguint(Sign::Plus, iss.shares[&i].clone()) *
+      IntegerSecretSharing::lagrange(4, i, &set);
+  }
+  assert_eq!(
+    cg.g().mul(&reconstructed.to_biguint().unwrap()),
+    iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta))
+  );
 }

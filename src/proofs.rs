@@ -229,7 +229,7 @@ impl ZkEncryptionProof {
       Err(())?
     }
     if self.D2.mul(cg.p()).add(&cg.g().mul(&self.e_r)) != S2C2c {
-      Err(()))?
+      Err(())?
     }
     let l = Self::transcript_u_Ds_e(transcript, &self.u_m, &self.D1, &self.D2, &self.e_r);
 
@@ -242,6 +242,18 @@ impl ZkEncryptionProof {
     if self.Q2.mul(&l).add(&cg.g().mul(&self.r_r)) != S2C2c {
       Err(())?
     }
+    Ok(())
+  }
+}
+
+// TODO
+pub struct ZkDlogProof {}
+impl ZkDlogProof {
+  pub fn prove() -> Self {
+    ZkDlogProof {}
+  }
+  #[allow(clippy::result_unit_err)]
+  pub fn verify(&self) -> Result<(), ()> {
     Ok(())
   }
 }
