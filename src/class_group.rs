@@ -7,6 +7,8 @@ use num_traits::*;
 use num_integer::*;
 use num_bigint::*;
 
+use transcript::Transcript;
+
 #[cfg(test)]
 const RHO_BITS: usize = 640;
 // delta k needs to be 1828 bits for 128-bit security
@@ -14,6 +16,19 @@ const RHO_BITS: usize = 640;
 const RHO_BITS: usize = 1828;
 
 const P_BITS: usize = 521;
+
+fn transcript_int(label: &'static [u8], transcript: &mut impl Transcript, i: &BigInt) {
+  let (sign, bytes) = i.to_bytes_be();
+  transcript.append_message(
+    b"sign",
+    [match sign {
+      Sign::Minus => 255,
+      Sign::NoSign => 0,
+      Sign::Plus => 1,
+    }],
+  );
+  transcript.append_message(label, bytes);
+}
 
 // https://eprint.iacr.org/2015/047 3.1 Proposition 1
 #[allow(non_snake_case)]
@@ -43,6 +58,15 @@ pub struct Element {
 }
 
 impl Element {
+  pub fn transcript(&self, label: &'static [u8], transcript: &mut impl Transcript) {
+    transcript.append_message(b"Element", label);
+    transcript_int(b"a", transcript, &self.a);
+    transcript_int(b"b", transcript, &self.b);
+    // c is deterministic off a/b per the discriminant, so transcripting c achieves binding to the
+    // discriminant
+    transcript_int(b"c", transcript, &self.c);
+  }
+
   // https://eprint.iacr.org/2015/047 B.2 provides this formula
   fn c(a: &BigInt, b: BigInt, discriminant: &BigInt) -> Option<BigInt> {
     // b**2 - 4ac = discriminant
@@ -191,8 +215,6 @@ impl ClassGroup {
       break q;
     };
 
-    println!("Generated q");
-
     let delta_k = BigInt::from_biguint(Sign::Minus, &p * &q);
 
     let p_square = p.clone().pow(2u8);
@@ -261,6 +283,9 @@ impl ClassGroup {
     ClassGroup { B, p, g, f, delta_p }
   }
 
+  pub fn p(&self) -> &BigUint {
+    &self.p
+  }
   pub fn g(&self) -> &Element {
     &self.g
   }
@@ -274,15 +299,7 @@ impl ClassGroup {
   pub fn sample_secret(&self, rng: &mut (impl RngCore + CryptoRng)) -> BigUint {
     #[allow(non_snake_case)]
     let Bp = &self.B * &self.p;
-    loop {
-      let mut bytes = vec![0; Bp.bits().div_ceil(8).try_into().unwrap()];
-      rng.fill_bytes(&mut bytes);
-      let x = BigUint::from_bytes_be(&bytes);
-      if x >= Bp {
-        continue;
-      }
-      break x;
-    }
+    crate::sample_number_less_than(rng, &Bp)
   }
 
   pub fn key_gen(&self, rng: &mut (impl RngCore + CryptoRng)) -> (BigUint, Element) {

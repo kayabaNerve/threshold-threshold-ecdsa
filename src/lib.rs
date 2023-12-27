@@ -1,3 +1,7 @@
+use rand_core::{RngCore, CryptoRng};
+
+use num_bigint::BigUint;
+
 use ciphersuite::{
   group::{ff::PrimeField, Group},
   Ciphersuite, Secp256k1,
@@ -5,7 +9,20 @@ use ciphersuite::{
 use elliptic_curve::point::AffineCoordinates;
 
 pub mod class_group;
+pub mod proofs;
 pub mod mpc;
+
+pub fn sample_number_less_than(rng: &mut (impl RngCore + CryptoRng), bound: &BigUint) -> BigUint {
+  loop {
+    let mut bytes = vec![0; bound.bits().div_ceil(8).try_into().unwrap()];
+    rng.fill_bytes(&mut bytes);
+    let x = BigUint::from_bytes_be(&bytes);
+    if x >= *bound {
+      continue;
+    }
+    break x;
+  }
+}
 
 pub fn verify(
   public_key: <Secp256k1 as Ciphersuite>::G,
@@ -203,6 +220,30 @@ mod tests {
         <Secp256k1 as Ciphersuite>::F::from_repr(final_z_i_repr.into()).unwrap(),
       z,
     );
+  }
+
+  #[test]
+  fn dlog_without_subgroup() {
+    use num_traits::*;
+
+    use transcript::{Transcript, RecommendedTranscript};
+
+    use class_group::*;
+    use proofs::ZkDlogWithoutSubgroupProof;
+
+    const LIMBS: usize = 256 / 64;
+    let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
+    let mut secp256k1_mod = [0; LIMBS * 8];
+    secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
+    secp256k1_mod[(LIMBS * 8) - 1] += 1;
+    let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
+
+    let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
+    let (private_key, public_key) = cg.key_gen(&mut OsRng);
+    let transcript = || RecommendedTranscript::new(b"DLog Without Subgroup Proof Test");
+    ZkDlogWithoutSubgroupProof::prove(&mut OsRng, &cg, &mut transcript(), &private_key)
+      .verify(&cg, &mut transcript(), &public_key)
+      .unwrap();
   }
 
   #[test]

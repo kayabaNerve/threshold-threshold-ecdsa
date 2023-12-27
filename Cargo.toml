@@ -5,8 +5,11 @@ edition = "2021"
 
 [dependencies]
 rand_core = { version = "0.6", features = ["std", "getrandom"] }
+rand_chacha = "0.3"
 
 subtle = "2"
+
+transcript = { package = "flexible-transcript", git = "https://github.com/serai-dex/serai" }
 
 k256 = "0.13"
 ciphersuite = { git = "https://github.com/serai-dex/serai", features = ["std", "secp256k1"] }
@@ -19,6 +22,9 @@ crypto-primes = "0.5"
 num-traits = "0.2"
 num-integer = "0.1"
 num-bigint = "0.4"
+
+[dev-dependencies]
+transcript = { package = "flexible-transcript", git = "https://github.com/serai-dex/serai", features = ["recommended"] }
 
 [patch.crates-io]
 # https://github.com/rust-lang-nursery/lazy-static.rs/issues/201

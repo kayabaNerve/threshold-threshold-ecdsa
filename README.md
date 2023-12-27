@@ -96,3 +96,4 @@ group for the modulus, and accordingly does not face such difficulties.
 - Proofs (literal)
 - Clean code with a competent API
 - Proofs (theoretical)
+- Make constant time, as possible, or mask secret-involving calculations

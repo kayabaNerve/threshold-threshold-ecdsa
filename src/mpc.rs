@@ -46,6 +46,7 @@ impl IntegerSecretSharing {
       y.push(f(i));
     }
 
+    #[allow(non_snake_case)]
     let mut C = vec![];
     C.push(cg.g().mul(&alpha));
     for r in &r {
@@ -56,6 +57,7 @@ impl IntegerSecretSharing {
     for (i, y) in y.iter().enumerate() {
       let i = i + 1;
       let mut eval = C[0].mul(&(&delta * &delta));
+      #[allow(non_snake_case)]
       for (C_i, C) in C[1 ..].iter().enumerate() {
         let C_i = C_i + 1;
         eval = eval.add(&C.mul(&i.pow(C_i.try_into().unwrap()).into()));
