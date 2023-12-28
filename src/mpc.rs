@@ -45,6 +45,17 @@ impl IntegerSecretSharing {
     }
     accum
   }
+
+  pub(crate) fn share_size(cg: &ClassGroup, t: u16, n: u16) -> u64 {
+    let delta = Self::delta(n);
+    // alpha is shared as alpha * delta
+    let alpha_bits = cg.p().bits() + delta.bits();
+    let coefficient_bits = cg.p().bits() + (&delta * t).bits() + 2;
+    // Coefficients have a factor of the following length
+    let coefficient_factor_bits = BigUint::from(n).pow(n.into()).bits();
+    alpha_bits + ((coefficient_bits + coefficient_factor_bits) * u64::from(t - 1))
+  }
+
   pub fn new(
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
@@ -52,19 +63,22 @@ impl IntegerSecretSharing {
     t: u16,
     n: u16,
   ) -> IntegerSecretSharing {
+    let delta = Self::delta(n);
+    // 2022-1437 distinguishes secret size and coefficient size.
+    // For alpha, it should be from the distribution Dq.
+    let alpha = crate::sample_number_less_than(&mut *rng, cg.p());
+    let alpha_tilde = &alpha * &delta;
+
+    // For the coefficient, the security proof requires the size be l + log2(hmax * t) + 1.
+    // This is interpreted as ceil(log2(Dq)) + log2(2 * delta * t) + 1.
+    // TODO: Double check this.
     let mut gen_coefficient = || {
-      // TODO: This uses the same size for all coefficients
-      // 2022-1437 distinguishes secret size and coefficient size.
-      let secret_bits = cg.secret_bits() - 1;
+      let secret_bits = cg.p().bits() + (&delta * t).bits() + 2;
       let mut secret = vec![0; secret_bits.div_ceil(8).try_into().unwrap()];
       rng.fill_bytes(&mut secret);
       secret[0] &= 0xff >> (8 - (secret_bits % 8));
       BigUint::from_bytes_be(&secret)
     };
-
-    let alpha = gen_coefficient();
-    let delta = Self::delta(n);
-    let alpha_tilde = &alpha * &delta;
 
     let mut r = vec![];
     for _ in 1 ..= (t - 1) {

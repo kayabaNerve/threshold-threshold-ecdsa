@@ -82,7 +82,7 @@ mod tests {
 
     use num_traits::{Zero, One, FromBytes};
     use num_integer::Integer;
-    use num_bigint::{Sign, BigInt};
+    use num_bigint::BigInt;
 
     use class_group::*;
     use proofs::*;
@@ -323,15 +323,8 @@ mod tests {
       #[allow(non_snake_case)]
       let W_i_d = d_ciphertext.0.mul(&(&shares[&i] * &delta));
 
-      // Prove this is a correct decryption share
-      let coefficient_size = BigUint::one() << cg.secret_bits();
-      // Coefficient 0 is of size coefficient * delta
-      // Coefficient t for t != 0 is of size coefficient * n.pow(n)
-      // There are t-1 such coefficients
-
-      let share_max_size = ((&coefficient_size * &delta) +
-        ((&coefficient_size * BigUint::from(4u16).pow(4u32)) * BigUint::from(3u16 - 1))) *
-        &delta;
+      let share_max_size =
+        BigUint::one() << (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits());
       let proof = ZkDlogEqualityProof::prove(
         &mut OsRng,
         &cg,
@@ -424,28 +417,20 @@ mod tests {
     let z = {
       #[allow(non_snake_case)]
       let M = z_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W_z.neg());
-      let value_scaled_by = BigInt::from_biguint(Sign::Plus, (&delta * &delta * &delta) % cg.p());
+      let value_scaled_by = (&delta * &delta * &delta) % cg.p();
       // Invert value_scaled_by over p
-      let p = BigInt::from_biguint(Sign::Plus, cg.p().clone());
-      let gcd = p.extended_gcd(&value_scaled_by);
-      assert!(gcd.gcd.is_one());
-      let inverse = if gcd.y.sign() == num_bigint::Sign::Plus { gcd.y } else { &p + gcd.y };
-      assert!((&inverse * &value_scaled_by).mod_floor(&p).is_one());
-      let inverse = inverse.to_biguint().unwrap();
+      let inverse = value_scaled_by.modpow(&(cg.p() - 2u8), cg.p());
+      assert!((&inverse * &value_scaled_by).mod_floor(cg.p()).is_one());
       (cg.solve(M).unwrap() * inverse) % cg.p()
     };
 
     let d_i_1 = {
       #[allow(non_snake_case)]
       let M = d_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W_d.neg());
-      let value_scaled_by = BigInt::from_biguint(Sign::Plus, (&delta * &delta * &delta) % cg.p());
+      let value_scaled_by = (&delta * &delta * &delta) % cg.p();
       // Invert value_scaled_by over p
-      let p = BigInt::from_biguint(Sign::Plus, cg.p().clone());
-      let gcd = p.extended_gcd(&value_scaled_by);
-      assert!(gcd.gcd.is_one());
-      let inverse = if gcd.y.sign() == num_bigint::Sign::Plus { gcd.y } else { &p + gcd.y };
-      assert!((&inverse * &value_scaled_by).mod_floor(&p).is_one());
-      let inverse = inverse.to_biguint().unwrap();
+      let inverse = value_scaled_by.modpow(&(cg.p() - 2u8), cg.p());
+      assert!((&inverse * &value_scaled_by).mod_floor(cg.p()).is_one());
       (cg.solve(M).unwrap() * inverse) % cg.p()
     };
     d_is.insert(0, {

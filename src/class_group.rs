@@ -32,21 +32,13 @@ fn transcript_int(label: &'static [u8], transcript: &mut impl Transcript, i: &Bi
 
 // https://eprint.iacr.org/2015/047 3.1 Proposition 1
 #[allow(non_snake_case)]
-fn L(m: BigUint, p_uint: &BigUint) -> BigInt {
-  let m = BigInt::from(m.mod_floor(p_uint));
-  let p = BigInt::from(p_uint.clone());
-
+fn L(m: BigUint, p: &BigUint) -> BigInt {
   // Invert m over p
-  let gcd = p.extended_gcd(&m);
-  assert!(gcd.gcd.is_one());
-  let inverse = if gcd.y.sign() == Sign::Plus { gcd.y } else { &p + gcd.y };
-  assert!((&inverse * &m).mod_floor(&p).is_one());
-  let inverse = inverse.to_biguint().unwrap();
-
+  let inverse = m.modpow(&(p - 2u8), p);
   if inverse.is_odd() {
     inverse.into()
   } else {
-    BigInt::from_biguint(Sign::Minus, p_uint - inverse)
+    BigInt::from_biguint(Sign::Minus, p - inverse)
   }
 }
 
@@ -151,6 +143,7 @@ impl Element {
 
   pub fn mul(&self, pow: &BigUint) -> Self {
     let mut res: Option<Self> = None;
+    // TODO: Use a table here
     for b in 0 .. pow.bits() {
       let b = pow.bits() - 1 - b;
       if let Some(res) = &mut res {
@@ -299,7 +292,6 @@ impl ClassGroup {
     &self.delta_p
   }
 
-
   // Returns the upper bound for the order multiplied by the prime field messages are over, as used
   // as the bound for secrets by the original 2015-047 paper.
   pub fn secret_bound(&self) -> BigUint {
@@ -342,14 +334,12 @@ impl ClassGroup {
 
   #[allow(non_snake_case)]
   pub(crate) fn solve(&self, X: Element) -> Option<BigUint> {
-    let p = BigInt::from(self.p.clone());
-    let x = &X.b / &p;
-
-    let gcd = p.extended_gcd(&x.mod_floor(&p));
-    assert!(gcd.gcd.is_one());
-    let inverse = if gcd.y.sign() == Sign::Plus { gcd.y } else { &p + gcd.y };
-    assert!((&inverse * &x).mod_floor(&p).is_one());
-    Some(inverse.to_biguint().unwrap())
+    let p = &self.p;
+    let p_int = BigInt::from_biguint(Sign::Plus, p.clone());
+    let x = ((&X.b / &p_int).mod_floor(&p_int)).to_biguint().unwrap();
+    let inverse = x.modpow(&(p - 2u8), p);
+    assert!((&inverse * &x).mod_floor(p).is_one());
+    Some(inverse)
   }
 
   pub fn decrypt(&self, key: &BigUint, ciphertext: &Ciphertext) -> Option<BigUint> {

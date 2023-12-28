@@ -14,12 +14,12 @@ ciphersuite = { git = "https://github.com/serai-dex/serai", features = ["std", "
 elliptic-curve = "0.13"
 ecdsa = { version = "0.16", features = ["verifying", "hazmat"] }
 
-crypto-bigint = { version = "0.5", features = ["extra-sizes"] }
-crypto-primes = "0.5"
-
 num-traits = "0.2"
 num-integer = "0.1"
 num-bigint = "0.4"
+
+crypto-bigint = { version = "0.5", features = ["extra-sizes"] }
+crypto-primes = "0.5"
 
 [dev-dependencies]
 transcript = { package = "flexible-transcript", git = "https://github.com/serai-dex/serai", features = ["recommended"] }
