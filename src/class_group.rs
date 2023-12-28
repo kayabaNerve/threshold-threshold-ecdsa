@@ -3,7 +3,7 @@ use rand_core::{RngCore, CryptoRng};
 use crypto_bigint::{Encoding, Uint};
 use crypto_primes::generate_safe_prime_with_rng;
 
-use num_traits::{Zero, One, Signed, Pow, Euclid, FromBytes};
+use num_traits::{Zero, One, Signed, Pow, Euclid};
 use num_integer::*;
 use num_bigint::*;
 
@@ -149,26 +149,23 @@ impl Element {
 
     let mut res: Option<Self> = None;
 
-    let mut bits = vec![];
+    let mut bits = 0;
     for b in 0 .. scalar.bits() {
+      let full_bits = (b % 5) == 4;
       let b = scalar.bits() - 1 - b;
-      bits.push(scalar.bit(b));
-      if bits.len() == 5 {
+      bits <<= 1;
+      bits |= u8::from(scalar.bit(b));
+      if full_bits {
         if let Some(res) = &mut res {
           for _ in 0 .. 5 {
             *res = res.double();
           }
         }
-        let i = (u8::from(bits[0]) << 4) |
-          (u8::from(bits[1]) << 3) |
-          (u8::from(bits[2]) << 2) |
-          (u8::from(bits[3]) << 1) |
-          (u8::from(bits[4]) << 0);
-        bits.truncate(0);
-        if i == 0 {
+        if bits == 0 {
           continue;
         }
-        let to_add = &table[usize::from(i) - 1];
+        let to_add = &table[usize::from(bits) - 1];
+        bits = 0;
         if let Some(res) = &mut res {
           *res = res.add(to_add);
         } else {
@@ -176,16 +173,17 @@ impl Element {
         }
       }
     }
-    for bit in bits {
-      if let Some(res) = &mut res {
+    if let Some(res) = &mut res {
+      for _ in 0 .. (scalar.bits() % 5) {
         *res = res.double();
       }
-      if bit {
-        if let Some(res) = &mut res {
-          *res = res.add(self);
-        } else {
-          res = Some(self.clone());
-        }
+    }
+    if bits != 0 {
+      let to_add = &table[usize::from(bits) - 1];
+      if let Some(res) = &mut res {
+        *res = res.add(to_add);
+      } else {
+        res = Some(to_add.clone());
       }
     }
     res.unwrap()
@@ -421,19 +419,19 @@ fn class_group() {
   let mut secp256k1_mod = [0; LIMBS * 8];
   secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
   secp256k1_mod[(LIMBS * 8) - 1] += 1;
-  let secp256k1_mod = num_bigint::BigUint::from_be_bytes(&secp256k1_mod);
+  let secp256k1_mod = num_bigint::BigUint::from_bytes_be(&secp256k1_mod);
 
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let (private_key, public_key) = cg.key_gen(&mut OsRng);
 
   let mut m1 = vec![0; 31];
   OsRng.fill_bytes(&mut m1);
-  let m1 = num_bigint::BigUint::from_be_bytes(&m1);
+  let m1 = num_bigint::BigUint::from_bytes_be(&m1);
   assert_eq!(cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m1).1).unwrap(), m1);
 
   let mut m2 = vec![0; 31];
   OsRng.fill_bytes(&mut m2);
-  let m2 = num_bigint::BigUint::from_be_bytes(&m2);
+  let m2 = num_bigint::BigUint::from_bytes_be(&m2);
   assert_eq!(cg.decrypt(&private_key, &cg.encrypt(&mut OsRng, &public_key, &m2).1).unwrap(), m2);
 
   assert_eq!(
