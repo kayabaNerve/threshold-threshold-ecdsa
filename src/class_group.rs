@@ -3,7 +3,7 @@ use rand_core::{RngCore, CryptoRng};
 use crypto_bigint::{Encoding, Uint};
 use crypto_primes::generate_safe_prime_with_rng;
 
-use num_traits::*;
+use num_traits::{Zero, One, Signed, Pow, Euclid, FromBytes};
 use num_integer::*;
 use num_bigint::*;
 
@@ -141,15 +141,46 @@ impl Element {
     Self { a: self.a, b: -self.b, c: self.c }.reduce()
   }
 
-  pub fn mul(&self, pow: &BigUint) -> Self {
+  pub fn mul(&self, scalar: &BigUint) -> Self {
+    let mut table = vec![self.clone()];
+    for _ in 2 .. 32 {
+      table.push(table.last().unwrap().add(self));
+    }
+
     let mut res: Option<Self> = None;
-    // TODO: Use a table here
-    for b in 0 .. pow.bits() {
-      let b = pow.bits() - 1 - b;
+
+    let mut bits = vec![];
+    for b in 0 .. scalar.bits() {
+      let b = scalar.bits() - 1 - b;
+      bits.push(scalar.bit(b));
+      if bits.len() == 5 {
+        if let Some(res) = &mut res {
+          for _ in 0 .. 5 {
+            *res = res.double();
+          }
+        }
+        let i = (u8::from(bits[0]) << 4) |
+          (u8::from(bits[1]) << 3) |
+          (u8::from(bits[2]) << 2) |
+          (u8::from(bits[3]) << 1) |
+          (u8::from(bits[4]) << 0);
+        bits.truncate(0);
+        if i == 0 {
+          continue;
+        }
+        let to_add = &table[usize::from(i) - 1];
+        if let Some(res) = &mut res {
+          *res = res.add(to_add);
+        } else {
+          res = Some(to_add.clone());
+        }
+      }
+    }
+    for bit in bits {
       if let Some(res) = &mut res {
         *res = res.double();
       }
-      if pow.bit(b) {
+      if bit {
         if let Some(res) = &mut res {
           *res = res.add(self);
         } else {
