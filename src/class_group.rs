@@ -47,6 +47,8 @@ pub struct Element {
   a: BigInt,
   b: BigInt,
   c: BigInt,
+  #[allow(non_snake_case)]
+  L: BigInt,
 }
 
 impl Element {
@@ -62,7 +64,7 @@ impl Element {
   // https://eprint.iacr.org/2015/047 B.2 provides this formula
   fn c(a: &BigInt, b: BigInt, discriminant: &BigInt) -> Option<BigInt> {
     // b**2 - 4ac = discriminant
-    //  b**2 - discriminant = 4ac
+    // b**2 - discriminant = 4ac
     let four_ac: BigInt = b.pow(2u8) - discriminant;
     if !(&four_ac & BigInt::from(3u8)).is_zero() {
       None?
@@ -77,7 +79,7 @@ impl Element {
 
   // Algorithm 5.4.2 of A Course in Computational Algebraic Number Theory
   pub fn reduce(self) -> Self {
-    let Element { mut a, mut b, mut c } = self;
+    let Element { mut a, mut b, mut c, L } = self;
     let step_2 = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
       let two_a = &*a << 1;
       let (mut q, mut r) = (b.div_euclid(&two_a), b.rem_euclid(&two_a));
@@ -103,7 +105,7 @@ impl Element {
     if (a == c) && b.is_negative() {
       b = -b;
     }
-    Element { a, b, c }
+    Element { a, b, c, L }
   }
 
   // Algorithm 5.4.7 of A Course in Computational Algebraic Number Theory
@@ -130,15 +132,80 @@ impl Element {
     let a3 = &v1 * &v2;
     let c3 = ((&f2.c * &d1) + (&r * (&f2.b + (v2 * &r)))) / v1;
 
-    (Element { a: a3, b: b3, c: c3 }).reduce()
+    (Element { a: a3, b: b3, c: c3, L: self.L.clone() }).reduce()
   }
 
+  // Algorithm 5.4.8 of A Course in Computational Algebraic Number Theory
   pub fn double(&self) -> Self {
-    self.add(self)
+    #[allow(non_snake_case)]
+    let L = &self.L;
+
+    let ExtendedGcd { x: u, y: v, gcd: d1 } = self.b.extended_gcd(&self.a);
+    assert_eq!((&u * &self.b) + (&v * &self.a), d1);
+    #[allow(non_snake_case)]
+    let A = &self.a / &d1;
+    #[allow(non_snake_case)]
+    let B = &self.b / &d1;
+    #[allow(non_snake_case)]
+    let mut C = -(&self.c * &u).mod_floor(&A);
+    #[allow(non_snake_case)]
+    let C1 = &A - &C;
+    if C1 < C {
+      C = -C1;
+    }
+
+    let parteucl = |a: BigInt, b: BigInt| {
+      let mut v = BigInt::zero();
+      let mut d = a;
+      let mut v2 = BigInt::one();
+      let mut v3 = b;
+      let mut z = BigInt::zero();
+      while v3.abs() > *L {
+        let (q, t3) = (d.div_euclid(&v3), d.rem_euclid(&v3));
+        let t2 = &v - (&q * &v2);
+        v = v2;
+        d = v3;
+        v2 = t2;
+        v3 = t3;
+        z += 1;
+      }
+      if z.is_odd() {
+        v2 = -v2;
+        v3 = -v3;
+      }
+      (v, d, v2, v3, z)
+    };
+
+    let (mut v, d, mut v2, v3, z) = parteucl(A.clone(), C);
+    if z.is_zero() {
+      let g = ((&B * &v3) + &self.c) / &d;
+      let a2 = &d * &d;
+      let c2 = &v3 * &v3;
+      let b2_part = &d + &v3;
+      let b2 = &self.b + (&b2_part * &b2_part) - &a2 - &c2;
+      let c2 = &c2 + (&g * &d1);
+      return (Element { a: a2, b: b2, c: c2, L: self.L.clone() }).reduce();
+    }
+
+    let e = ((&self.c * &v) + (&B * &d)) / &A;
+    let g = ((&e * &v2) - &B) / &v;
+    let mut b2 = (&e * &v2) + (&v * &g);
+    if d1 > BigInt::one() {
+      b2 = &d1 * &b2;
+      v = &d1 * &v;
+      v2 = &d1 * &v2;
+    }
+    let a2 = &d * &d;
+    let c2 = &v3 * &v3;
+    let b2_part = &d + &v3;
+    let b2 = &b2 + (&b2_part * &b2_part) - &a2 - &c2;
+    let a2 = &a2 + (&e * &v);
+    let c2 = &c2 + (&g * &v2);
+    (Element { a: a2, b: b2, c: c2, L: self.L.clone() }).reduce()
   }
 
   pub fn neg(self) -> Self {
-    Self { a: self.a, b: -self.b, c: self.c }.reduce()
+    Self { a: self.a, b: -self.b, c: self.c, L: self.L.clone() }.reduce()
   }
 
   pub fn mul(&self, scalar: &BigUint) -> Self {
@@ -241,9 +308,20 @@ impl ClassGroup {
 
     let p_square = p.clone().pow(2u8);
     let delta_p = &delta_k * BigInt::from(p_square.clone());
+
+    #[allow(non_snake_case)]
+    let double_L: BigInt = &delta_p >> 2;
+    #[allow(non_snake_case)]
+    let double_L = double_L.abs().sqrt().sqrt();
+
     let f_a = BigInt::from_biguint(Sign::Plus, p_square.clone());
     let f_b = BigInt::from_biguint(Sign::Plus, p.clone());
-    let f = Element { c: Element::c(&f_a, f_b.clone(), &delta_p).unwrap(), a: f_a, b: f_b };
+    let f = Element {
+      c: Element::c(&f_a, f_b.clone(), &delta_p).unwrap(),
+      a: f_a,
+      b: f_b,
+      L: double_L.clone(),
+    };
 
     let r = loop {
       let r = generate_safe_prime_with_rng::<{ P_BITS / 64 }>(&mut *rng, None);
@@ -298,8 +376,12 @@ impl ClassGroup {
     #[allow(non_snake_case)]
     let L = L(r.pow(2u8), &p) * BigInt::from(p.clone());
     let g_init_a = p_square.into();
-    let g_init =
-      Element { c: Element::c(&g_init_a, L.clone(), &delta_p).unwrap(), a: g_init_a, b: L };
+    let g_init = Element {
+      c: Element::c(&g_init_a, L.clone(), &delta_p).unwrap(),
+      a: g_init_a,
+      b: L,
+      L: double_L.clone(),
+    };
     let g = g_init.mul(&p).add(&f.mul(&k));
 
     ClassGroup { B, p, g, f, delta_p }
