@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use rand_core::{RngCore, CryptoRng};
 
 use crypto_bigint::{Encoding, Uint};
@@ -31,7 +33,6 @@ fn transcript_int(label: &'static [u8], transcript: &mut impl Transcript, i: &Bi
 }
 
 // https://eprint.iacr.org/2015/047 3.1 Proposition 1
-#[allow(non_snake_case)]
 fn L(m: BigUint, p: &BigUint) -> BigInt {
   // Invert m over p
   let inverse = m.modpow(&(p - 2u8), p);
@@ -47,7 +48,6 @@ pub struct Element {
   a: BigInt,
   b: BigInt,
   c: BigInt,
-  #[allow(non_snake_case)]
   L: BigInt,
 }
 
@@ -83,14 +83,14 @@ impl Element {
     let step_2 = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
       let two_a = &*a << 1;
       let (mut q, mut r) = (b.div_euclid(&two_a), b.rem_euclid(&two_a));
-      assert_eq!(*b, (&two_a * &q) + &r);
+      debug_assert_eq!(*b, (&two_a * &q) + &r);
       if r > *a {
         r -= &two_a;
         q += 1;
       }
-      assert_eq!(*b, (&two_a * &q) + &r);
-      assert!(-&*a < r);
-      assert!(r <= *a);
+      debug_assert_eq!(*b, (&two_a * &q) + &r);
+      debug_assert!(-&*a < r);
+      debug_assert!(r <= *a);
       *c -= ((&*b + &r) >> 1) * &q;
       *b = r;
     };
@@ -108,47 +108,117 @@ impl Element {
     Element { a, b, c, L }
   }
 
-  // Algorithm 5.4.7 of A Course in Computational Algebraic Number Theory
+  // Algorithm 5.4.9 of A Course in Computational Algebraic Number Theory
   pub fn add(&self, other: &Self) -> Self {
-    // Step 1
-    let (f1, f2) = if self.a > other.a { (other, self) } else { (self, other) };
-    let s = (&f1.b + &f2.b) >> 1u8;
+    let L = &self.L;
+
+    let (f1, f2) = if self.a < other.a { (other, self) } else { (self, other) };
+    let mut s = (&f1.b + &f2.b) >> 1u8;
     let n = &f2.b - &s;
 
-    let ExtendedGcd { x: u, y: v, gcd: d } = f2.a.extended_gcd(&f1.a);
-    assert_eq!((&u * &f2.a) + (&v * &f1.a), d);
-    let y1 = u;
+    let ExtendedGcd { x: u, y: v, gcd: mut d } = f2.a.extended_gcd(&f1.a);
+    debug_assert_eq!((&u * &f2.a) + (&v * &f1.a), d);
 
-    let ExtendedGcd { x: u, y: v, gcd: d1 } = s.extended_gcd(&d);
-    assert_eq!((&u * &s) + (&v * &d), d1);
+    let mut a1 = f1.a.clone();
+    let mut a2 = f2.a.clone();
 
-    let x2 = u;
-    let y2 = -v;
+    let (A, d1) = if d.is_one() {
+      let A = -u * &n;
+      let d1 = d;
+      (A, d1)
+    } else if s.mod_floor(&d).is_zero() {
+      let A = -u * &n;
+      let d1 = d;
+      a1 /= &d1;
+      a2 /= &d1;
+      s /= &d1;
+      (A, d1)
+    } else {
+      let ExtendedGcd { x: u1, y: _, gcd: d1 } = s.extended_gcd(&d);
+      if d1 > BigInt::one() {
+        a1 /= &d1;
+        a2 /= &d1;
+        s /= &d1;
+        d /= &d1;
+      }
 
-    let v1 = &f1.a / &d1;
-    let v2 = &f2.a / &d1;
-    let r = ((&y1 * &y2 * &n) - (&x2 * &f2.c)).mod_floor(&v1);
-    let b3 = &f2.b + ((&v2 * &r) << 1u8);
-    let a3 = &v1 * &v2;
-    let c3 = ((&f2.c * &d1) + (&r * (&f2.b + (v2 * &r)))) / v1;
+      let l = (&u * f1.c.mod_floor(&d)) + (v * f2.c.mod_floor(&d));
+      let l = (&u1 * l).mod_floor(&d);
+      let l = &d - l;
+      let A = (&l * (&a1 / &d)) - (u * (&n / &d));
+      (A, d1)
+    };
 
+    let mut A = A.mod_floor(&a1);
+    let A1 = &a1 - &A;
+    if A1 < A {
+      A = -A1;
+    }
+
+    let parteucl = |a: BigInt, b: BigInt| {
+      let mut v = BigInt::zero();
+      let mut d = a;
+      let mut v2 = BigInt::one();
+      let mut v3 = b;
+      let mut z = BigInt::zero();
+      while v3.abs() > *L {
+        let (q, t3) = (d.div_euclid(&v3), d.rem_euclid(&v3));
+        debug_assert_eq!(t3.sign(), Sign::Plus);
+        let t2 = &v - (&q * &v2);
+        v = v2;
+        d = v3;
+        v2 = t2;
+        v3 = t3;
+        z += 1;
+      }
+      if z.is_odd() {
+        v2 = -v2;
+        v3 = -v3;
+      }
+      (v, d, v2, v3, z)
+    };
+
+    let (mut v, d, mut v2, v3, z) = parteucl(a1.clone(), A);
+
+    if z.is_zero() {
+      let Q1 = &a2 * &v3;
+      let Q2 = &Q1 + &n;
+      let f = &Q2 / &d;
+      let g = ((&v3 * &s) + &f2.c) / &d;
+      let a3 = &d * &a2;
+      let c3 = (&v3 * &f) + (&g * &d1);
+      let b3 = (Q1 << 1) + &f2.b;
+      return (Element { a: a3, b: b3, c: c3, L: self.L.clone() }).reduce();
+    }
+
+    let b = ((&a2 * &d) + (&n * &v)) / &a1;
+    let Q1 = &b * &v3;
+    let Q2 = &Q1 + &n;
+    let f = &Q2 / &d;
+    let e = ((&s * &d) + (&f2.c * &v)) / &a1;
+    let Q3 = &e * &v2;
+    let Q4 = &Q3 - &s;
+    let g = &Q4 / &v;
+    if d1 > BigInt::one() {
+      v2 = &d1 * &v2;
+      v = &d1 * &v;
+    }
+
+    let a3 = (&d * &b) + (&e * &v);
+    let c3 = (&v3 * &f) + (&g * &v2);
+    let b3 = (&Q1 + &Q2) + (&d1 * (&Q3 + &Q4));
     (Element { a: a3, b: b3, c: c3, L: self.L.clone() }).reduce()
   }
 
   // Algorithm 5.4.8 of A Course in Computational Algebraic Number Theory
   pub fn double(&self) -> Self {
-    #[allow(non_snake_case)]
     let L = &self.L;
 
     let ExtendedGcd { x: u, y: v, gcd: d1 } = self.b.extended_gcd(&self.a);
-    assert_eq!((&u * &self.b) + (&v * &self.a), d1);
-    #[allow(non_snake_case)]
+    debug_assert_eq!((&u * &self.b) + (&v * &self.a), d1);
     let A = &self.a / &d1;
-    #[allow(non_snake_case)]
     let B = &self.b / &d1;
-    #[allow(non_snake_case)]
     let mut C = -(&self.c * &u).mod_floor(&A);
-    #[allow(non_snake_case)]
     let C1 = &A - &C;
     if C1 < C {
       C = -C1;
@@ -268,7 +338,6 @@ impl Ciphertext {
   }
 }
 
-#[allow(non_snake_case)]
 pub struct ClassGroup {
   B: BigUint,
   p: BigUint,
@@ -282,11 +351,11 @@ impl ClassGroup {
   pub fn setup(rng: &mut (impl RngCore + CryptoRng), p: BigUint) -> Self {
     {
       let lambda = (RHO_BITS + P_BITS) / 2;
-      assert!(lambda >= (P_BITS + 2));
+      debug_assert!(lambda >= (P_BITS + 2));
     }
 
     let q = loop {
-      assert_eq!(Uint::<{ RHO_BITS / 64 }>::BITS, RHO_BITS);
+      debug_assert_eq!(Uint::<{ RHO_BITS / 64 }>::BITS, RHO_BITS);
       let q = generate_safe_prime_with_rng::<{ RHO_BITS / 64 }>(&mut *rng, None);
       let q = BigUint::from_bytes_be(q.to_be_bytes().as_ref());
       // p * q is congruent to -1 mod 4
@@ -297,7 +366,7 @@ impl ClassGroup {
       let q_minus_one = &q - 1u8;
       let exp = &q_minus_one >> 1;
       let res = p.modpow(&exp, &q);
-      assert!((res.is_zero()) || (res.is_one()) || (res == q_minus_one));
+      debug_assert!((res.is_zero()) || (res.is_one()) || (res == q_minus_one));
       if res != q_minus_one {
         continue;
       }
@@ -309,9 +378,7 @@ impl ClassGroup {
     let p_square = p.clone().pow(2u8);
     let delta_p = &delta_k * BigInt::from(p_square.clone());
 
-    #[allow(non_snake_case)]
     let double_L: BigInt = &delta_p >> 2;
-    #[allow(non_snake_case)]
     let double_L = double_L.abs().sqrt().sqrt();
 
     let f_a = BigInt::from_biguint(Sign::Plus, p_square.clone());
@@ -336,7 +403,7 @@ impl ClassGroup {
       let r_minus_one = &r_int - 1u8;
       let exp = &r_minus_one >> 1;
       let res = delta_k.mod_floor(&r_int).modpow(&exp, &r_int);
-      assert!((res.is_zero()) || (res.is_one()) || (res == r_minus_one));
+      debug_assert!((res.is_zero()) || (res.is_one()) || (res == r_minus_one));
       if res.is_one() {
         break r;
       }
@@ -367,13 +434,11 @@ impl ClassGroup {
       }
       jump >>= 1;
     }
-    assert!(quad_root.clone().pow(4u8) < abs_delta_k_cubed);
+    debug_assert!(quad_root.clone().pow(4u8) < abs_delta_k_cubed);
     quad_root += 1u8;
-    assert!(quad_root.clone().pow(4u8) >= abs_delta_k_cubed);
-    #[allow(non_snake_case)]
+    debug_assert!(quad_root.clone().pow(4u8) >= abs_delta_k_cubed);
     let B = quad_root;
 
-    #[allow(non_snake_case)]
     let L = L(r.pow(2u8), &p) * BigInt::from(p.clone());
     let g_init_a = p_square.into();
     let g_init = Element {
@@ -415,7 +480,6 @@ impl ClassGroup {
   // Future papers frequently specify to sample B * 2**d, where d is the statistical distance
   // tolerance. Please be aware of this distinction.
   pub fn sample_secret(&self, rng: &mut (impl RngCore + CryptoRng)) -> BigUint {
-    #[allow(non_snake_case)]
     let Bp = self.secret_bound();
     crate::sample_number_less_than(rng, &Bp)
   }
@@ -443,13 +507,15 @@ impl ClassGroup {
     (r, Ciphertext(c1, c2))
   }
 
-  #[allow(non_snake_case)]
   pub(crate) fn solve(&self, X: Element) -> Option<BigUint> {
     let p = &self.p;
     let p_int = BigInt::from_biguint(Sign::Plus, p.clone());
     let x = ((&X.b / &p_int).mod_floor(&p_int)).to_biguint().unwrap();
+    if x.is_zero() {
+      None?
+    }
     let inverse = x.modpow(&(p - 2u8), p);
-    assert!((&inverse * &x).mod_floor(p).is_one());
+    debug_assert!((&inverse * &x).mod_floor(p).is_one());
     Some(inverse)
   }
 

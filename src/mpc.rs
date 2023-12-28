@@ -108,7 +108,7 @@ impl IntegerSecretSharing {
       commitments.push(CommitmentWithProof::new(rng, cg, transcript, &(r * &delta)));
     }
 
-    #[cfg(test)]
+    #[cfg(debug_assertions)]
     for (i, y) in &y {
       let mut eval = commitments[0].commitment.mul(&(&delta * &delta));
       #[allow(non_snake_case)]
@@ -117,7 +117,7 @@ impl IntegerSecretSharing {
         let i = BigUint::from(*i);
         eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
       }
-      assert_eq!(cg.g().mul(&(y * &delta)), eval);
+      debug_assert_eq!(cg.g().mul(&(y * &delta)), eval);
     }
 
     IntegerSecretSharing { delta, commitments, shares: y }
