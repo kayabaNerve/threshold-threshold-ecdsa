@@ -77,7 +77,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "ciphersuite"
 version = "0.4.1"
-source = "git+https://github.com/serai-dex/serai#2b23252b4c6106a204a1f870ce729b9a65ff5298"
+source = "git+https://github.com/serai-dex/serai#fff8dcb8271e2da9c6d0a259fd346338ac5c740f"
 dependencies = [
  "dalek-ff-group",
  "digest",
@@ -176,7 +176,7 @@ dependencies = [
 [[package]]
 name = "dalek-ff-group"
 version = "0.4.1"
-source = "git+https://github.com/serai-dex/serai#2b23252b4c6106a204a1f870ce729b9a65ff5298"
+source = "git+https://github.com/serai-dex/serai#fff8dcb8271e2da9c6d0a259fd346338ac5c740f"
 dependencies = [
  "crypto-bigint",
  "curve25519-dalek",
@@ -265,7 +265,7 @@ checksum = "27573eac26f4dd11e2b1916c3fe1baa56407c83c71a773a8ba17ec0bca03b6b7"
 [[package]]
 name = "flexible-transcript"
 version = "0.3.2"
-source = "git+https://github.com/serai-dex/serai#2b23252b4c6106a204a1f870ce729b9a65ff5298"
+source = "git+https://github.com/serai-dex/serai#fff8dcb8271e2da9c6d0a259fd346338ac5c740f"
 dependencies = [
  "blake2",
  "digest",
@@ -385,7 +385,7 @@ dependencies = [
 [[package]]
 name = "minimal-ed448"
 version = "0.4.0"
-source = "git+https://github.com/serai-dex/serai#2b23252b4c6106a204a1f870ce729b9a65ff5298"
+source = "git+https://github.com/serai-dex/serai#fff8dcb8271e2da9c6d0a259fd346338ac5c740f"
 dependencies = [
  "crypto-bigint",
  "ff",
@@ -613,7 +613,7 @@ dependencies = [
 [[package]]
 name = "std-shims"
 version = "0.1.1"
-source = "git+https://github.com/serai-dex/serai#2b23252b4c6106a204a1f870ce729b9a65ff5298"
+source = "git+https://github.com/serai-dex/serai#fff8dcb8271e2da9c6d0a259fd346338ac5c740f"
 dependencies = [
  "hashbrown",
  "spin",

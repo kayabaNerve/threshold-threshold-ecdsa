@@ -96,3 +96,6 @@ group for the modulus, and accordingly does not face such difficulties.
 - Proofs (theoretical)
 - Make constant time, as possible, or mask secret-involving calculations
 - Correct various security parameters
+- Decentralized calculation of the K ciphertext
+- Proven calculation of X
+- Share verification

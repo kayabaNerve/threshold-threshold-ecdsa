@@ -80,7 +80,7 @@ mod tests {
 
     use transcript::{Transcript, RecommendedTranscript};
 
-    use num_traits::*;
+    use num_traits::{Zero, One, FromBytes};
     use num_integer::Integer;
     use num_bigint::{Sign, BigInt};
 
@@ -144,7 +144,15 @@ mod tests {
     }
     let delta = delta.unwrap();
     let public_key = public_key.unwrap();
+
+    // TODO: Replace with a proven, decentralized flow
+    let ec_key = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+    let k_ciphertext =
+      cg.encrypt(&mut OsRng, &public_key, &BigUint::from_bytes_be(ec_key.to_repr().as_ref())).1;
+    let ec_key = <Secp256k1 as Ciphersuite>::generator() * ec_key;
     dbg!("Shimmed key gen");
+
+    let mut segment_time = std::time::Instant::now();
 
     // Round 1: Publish additive shares of the nonce
     let mut x_is = vec![];
@@ -157,8 +165,6 @@ mod tests {
       num_bytes.copy_from_slice(x_i.to_repr().as_ref());
       x_is.push(x_i);
 
-      #[allow(non_snake_case)]
-      let X = <Secp256k1 as Ciphersuite>::generator() * x_i;
       X_is.push(<Secp256k1 as Ciphersuite>::generator() * x_i);
 
       let message = BigUint::from_bytes_be(&num_bytes);
@@ -168,9 +174,14 @@ mod tests {
       proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
       x_i_ciphertexts.push(ciphertext);
     }
-    let x = x_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::F>();
     #[allow(non_snake_case)]
     let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
+
+    println!(
+      "Published X_is: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
 
     // Everyone now calculates the sum nonce
     let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
@@ -178,9 +189,16 @@ mod tests {
       x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext);
     }
 
+    println!(
+      "Calculated X: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
+
     // Round 2: Perform multiplication of the sum nonce by our shares of y
     let mut y_is = vec![];
     let mut xy_i_ciphertexts = vec![];
+    let mut ky_i_ciphertexts = vec![];
     for _ in 0 .. 3 {
       let mut num_bytes = [0; 32];
       let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
@@ -192,7 +210,7 @@ mod tests {
       // ourselves)
       // This randomness will also never be revealed
       // The eventual decryption of the remaining z_i value is after re-randomization by each
-      // substractive share
+      // subtractive share
       // This re-randomization doesn't include new randomness from signer i == 1, meaning a
       // malicious t-1 may give the decryptor this randomness, leaking all prior values
       // For the decryptor to notice and do so would require they also be malicious, preserving the
@@ -201,43 +219,109 @@ mod tests {
       let xy_i_ciphertext = x_ciphertext.mul_without_randomness(&scalar);
 
       // Prove this was correctly scaled
-      let proof = ZkDlogEqualityProof::prove(&mut OsRng, &cg, &mut transcript(), &x_ciphertext.0, &x_ciphertext.1, &scalar);
-      proof.verify(&cg, &mut transcript(), cg.p(), &x_ciphertext.0, &x_ciphertext.1, &xy_i_ciphertext.0, &xy_i_ciphertext.1).unwrap();
+      let proof = ZkDlogEqualityProof::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        &x_ciphertext.0,
+        &x_ciphertext.1,
+        &scalar,
+      );
+      proof
+        .verify(
+          &cg,
+          &mut transcript(),
+          cg.p(),
+          &x_ciphertext.0,
+          &x_ciphertext.1,
+          &xy_i_ciphertext.0,
+          &xy_i_ciphertext.1,
+        )
+        .unwrap();
       xy_i_ciphertexts.push(xy_i_ciphertext);
+
+      // Also perform multiplication of k by y
+      let ky_i_ciphertext = k_ciphertext.mul_without_randomness(&scalar);
+      let proof = ZkDlogEqualityProof::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        &k_ciphertext.0,
+        &k_ciphertext.1,
+        &scalar,
+      );
+      proof
+        .verify(
+          &cg,
+          &mut transcript(),
+          cg.p(),
+          &k_ciphertext.0,
+          &k_ciphertext.1,
+          &ky_i_ciphertext.0,
+          &ky_i_ciphertext.1,
+        )
+        .unwrap();
+      ky_i_ciphertexts.push(ky_i_ciphertext);
     }
-    let y = y_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::F>();
+
+    println!(
+      "xy and ky multiplications: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
 
     // Also, for signers i != 0, publish the subtractive shares
-    let mut z_is = vec![];
-    let mut z_i_ciphertexts = vec![];
+    let mut d_is = vec![];
+    let mut d_i_ciphertexts = vec![];
     for _ in 1 .. 3 {
       let mut num_bytes = [0; 32];
-      let z_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-      num_bytes.copy_from_slice((-z_i).to_repr().as_ref());
-      z_is.push(z_i);
+      let d_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+      num_bytes.copy_from_slice((-d_i).to_repr().as_ref());
+      d_is.push(d_i);
       let message = BigUint::from_bytes_be(&num_bytes);
       let (ciphertext, proof) =
         ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &message);
       proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
-      z_i_ciphertexts.push(ciphertext);
+      d_i_ciphertexts.push(ciphertext);
     }
+
+    println!(
+      "d_i subtractive shares: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
 
     // Everyone now calculates xy and the sum of the posted subtractive shares
     let mut z_ciphertext = xy_i_ciphertexts.pop().unwrap();
     for xy_ciphertext in &xy_i_ciphertexts {
       z_ciphertext = z_ciphertext.add_without_randomness(xy_ciphertext);
     }
-    for z_i_ciphertext in &z_i_ciphertexts {
-      z_ciphertext = z_ciphertext.add_without_randomness(z_i_ciphertext);
+
+    let mut d_ciphertext = ky_i_ciphertexts.pop().unwrap();
+    for ky_ciphertext in &ky_i_ciphertexts {
+      d_ciphertext = d_ciphertext.add_without_randomness(ky_ciphertext);
     }
+    for d_i_ciphertext in &d_i_ciphertexts {
+      d_ciphertext = d_ciphertext.add_without_randomness(d_i_ciphertext);
+    }
+
+    println!(
+      "z and d sums: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
 
     // Round 3: For signers i != 1, publish the decryption share for the remaining ciphertext
     let set = [1, 2, 3];
     #[allow(non_snake_case)]
-    let mut W_is = vec![];
+    let mut W_i_zs = vec![];
+    #[allow(non_snake_case)]
+    let mut W_i_ds = vec![];
     for i in 2u16 ..= 3 {
       #[allow(non_snake_case)]
-      let W_i = z_ciphertext.0.mul(&(&shares[&i] * &delta));
+      let W_i_z = z_ciphertext.0.mul(&(&shares[&i] * &delta));
+      #[allow(non_snake_case)]
+      let W_i_d = d_ciphertext.0.mul(&(&shares[&i] * &delta));
 
       // Prove this is a correct decryption share
       let coefficient_size = BigUint::one() << cg.secret_bits();
@@ -245,9 +329,47 @@ mod tests {
       // Coefficient t for t != 0 is of size coefficient * n.pow(n)
       // There are t-1 such coefficients
 
-      let share_max_size = (&coefficient_size * &delta) + ((&coefficient_size * BigUint::from(4u16).pow(4u16)) * BigUint::from(3u16 - 1));
-      let proof = ZkDlogEqualityProof::prove(&mut OsRng, &cg, &mut transcript(), cg.g(), &z_ciphertext.0, &(&shares[&i] * &delta));
-      proof.verify(&cg, &mut transcript(), &share_max_size, cg.g(), &z_ciphertext.0, &verification_shares[&i], &W_i).unwrap();
+      let share_max_size = ((&coefficient_size * &delta) +
+        ((&coefficient_size * BigUint::from(4u16).pow(4u32)) * BigUint::from(3u16 - 1))) *
+        &delta;
+      let proof = ZkDlogEqualityProof::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        cg.g(),
+        &z_ciphertext.0,
+        &(&shares[&i] * &delta),
+      );
+      proof
+        .verify(
+          &cg,
+          &mut transcript(),
+          &share_max_size,
+          cg.g(),
+          &z_ciphertext.0,
+          &verification_shares[&i],
+          &W_i_z,
+        )
+        .unwrap();
+      let proof = ZkDlogEqualityProof::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        cg.g(),
+        &d_ciphertext.0,
+        &(&shares[&i] * &delta),
+      );
+      proof
+        .verify(
+          &cg,
+          &mut transcript(),
+          &share_max_size,
+          cg.g(),
+          &d_ciphertext.0,
+          &verification_shares[&i],
+          &W_i_d,
+        )
+        .unwrap();
 
       // Technically, the lagrange coefficient can be applied after collecting shares
       // The provided lagrange function inlines the delta multiplication so it can return a single
@@ -257,29 +379,51 @@ mod tests {
       // don't need post-determinism of the lagrange coefficient
       let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
       #[allow(non_snake_case)]
-      let W_i = if lagrange < BigInt::zero() {
-        W_i.neg().mul(&(-lagrange).to_biguint().unwrap())
+      let W_i_z = if lagrange < BigInt::zero() {
+        W_i_z.neg().mul(&(-lagrange.clone()).to_biguint().unwrap())
       } else {
-        W_i.mul(&lagrange.to_biguint().unwrap())
+        W_i_z.mul(&lagrange.clone().to_biguint().unwrap())
       };
-      W_is.push(W_i);
+      W_i_zs.push(W_i_z);
+
+      #[allow(non_snake_case)]
+      let W_i_d = if lagrange < BigInt::zero() {
+        W_i_d.neg().mul(&(-lagrange).to_biguint().unwrap())
+      } else {
+        W_i_d.mul(&lagrange.to_biguint().unwrap())
+      };
+      W_i_ds.push(W_i_d);
     }
 
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what
-    // remains of z
+    // remains of z/d
     #[allow(non_snake_case)]
-    let mut W = z_ciphertext.0.mul(
+    let mut W_z = z_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
     );
     #[allow(non_snake_case)]
-    for W_i in W_is {
-      W = W.add(&W_i);
+    for W_i_z in W_i_zs {
+      W_z = W_z.add(&W_i_z);
+    }
+    #[allow(non_snake_case)]
+    let mut W_d = d_ciphertext.0.mul(
+      &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
+    );
+    #[allow(non_snake_case)]
+    for W_i_d in W_i_ds {
+      W_d = W_d.add(&W_i_d);
     }
 
-    // Recover the message
-    let z_i_1 = {
+    println!(
+      "i != 0 decryption shares: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
+
+    // Recover the messages
+    let z = {
       #[allow(non_snake_case)]
-      let M = z_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W.neg());
+      let M = z_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W_z.neg());
       let value_scaled_by = BigInt::from_biguint(Sign::Plus, (&delta * &delta * &delta) % cg.p());
       // Invert value_scaled_by over p
       let p = BigInt::from_biguint(Sign::Plus, cg.p().clone());
@@ -290,17 +434,57 @@ mod tests {
       let inverse = inverse.to_biguint().unwrap();
       (cg.solve(M).unwrap() * inverse) % cg.p()
     };
-    let z_i_2_and_3 = z_is.iter().sum::<<Secp256k1 as Ciphersuite>::F>();
-    assert_eq!(
-      (BigUint::from_bytes_be(z_i_2_and_3.to_repr().as_ref()) + z_i_1) % cg.p(),
-      BigUint::from_bytes_be((x * y).to_repr().as_ref()),
-    );
 
-    // Round 4: Publish signature shares
-    // TODO. Requires:
-    // - Pulling in the dkg crate
-    // - Having setup create a ciphertext for k (same process as for x)
-    // - Not just publishing xy_i ciphertexts yet ky_i ciphertexts
-    // - Also taking subtractive shares of ky
+    let d_i_1 = {
+      #[allow(non_snake_case)]
+      let M = d_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W_d.neg());
+      let value_scaled_by = BigInt::from_biguint(Sign::Plus, (&delta * &delta * &delta) % cg.p());
+      // Invert value_scaled_by over p
+      let p = BigInt::from_biguint(Sign::Plus, cg.p().clone());
+      let gcd = p.extended_gcd(&value_scaled_by);
+      assert!(gcd.gcd.is_one());
+      let inverse = if gcd.y.sign() == num_bigint::Sign::Plus { gcd.y } else { &p + gcd.y };
+      assert!((&inverse * &value_scaled_by).mod_floor(&p).is_one());
+      let inverse = inverse.to_biguint().unwrap();
+      (cg.solve(M).unwrap() * inverse) % cg.p()
+    };
+    d_is.insert(0, {
+      let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
+      let bytes_ref: &mut [u8] = bytes.as_mut();
+      bytes_ref.copy_from_slice(&d_i_1.to_bytes_be());
+      <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
+    });
+
+    println!(
+      "z and d_i decryption: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    segment_time = std::time::Instant::now();
+
+    // Round 4: Publish signature shares (TODO: Inline this with round 3)
+    let mut w = <Secp256k1 as Ciphersuite>::F::ZERO;
+    let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
+    let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+    for i in 1u16 ..= 3 {
+      // TODO: We need verification shares for y_i, d_i
+      w += (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1)]);
+    }
+    let s = w *
+      ({
+        let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
+        let bytes_ref: &mut [u8] = bytes.as_mut();
+        bytes_ref.copy_from_slice(&z.to_bytes_be());
+        <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
+      })
+      .invert()
+      .unwrap();
+
+    println!(
+      "Signature share calculation: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis()
+    );
+    // segment_time = std::time::Instant::now();
+
+    verify(ec_key, m1_hash, r, s);
   }
 }
