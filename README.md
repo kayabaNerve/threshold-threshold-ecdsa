@@ -41,7 +41,7 @@ to represent any arbitrary additive-sharing of the value `z` such that
 - `ciphertext_z_i` = `Enc(-z_i)` <- 1 round of communication, parallelizable
    with the above round
 - `ciphertext_z_1` = `Product(ciphertext_z, ciphertext_z_i)`
-- Send `1` decryption share for `ciphertext_z_1` if i in 2 ..= t <- 1 round of
+- Send decryption share for `ciphertext_z_1` if i in 2 ..= t <- 1 round of
   communication
 
 At this time, this does not describe a verifiable scheme yet a verifiable scheme

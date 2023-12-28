@@ -171,17 +171,22 @@ mod tests {
       // TODO: Replace this ciphertext validity proof with 2020-084 Fig 7, as comprehensive to X_i
       let (ciphertext, proof) =
         ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &message);
+      println!(
+        "Proved for X_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
       proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
+      println!(
+        "Verified X_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
       x_i_ciphertexts.push(ciphertext);
     }
     #[allow(non_snake_case)]
     let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
-
-    println!(
-      "Published X_is: {}",
-      std::time::Instant::now().duration_since(segment_time).as_millis()
-    );
-    segment_time = std::time::Instant::now();
+    let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
 
     // Everyone now calculates the sum nonce
     let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
@@ -270,7 +275,7 @@ mod tests {
     );
     segment_time = std::time::Instant::now();
 
-    // Also, for signers i != 0, publish the subtractive shares
+    // Also, for signers i != 1, publish the subtractive shares of d_i and signature shares
     let mut d_is = vec![];
     let mut d_i_ciphertexts = vec![];
     for _ in 1 .. 3 {
@@ -311,12 +316,15 @@ mod tests {
     );
     segment_time = std::time::Instant::now();
 
-    // Round 3: For signers i != 1, publish the decryption share for the remaining ciphertext
+    // Round 3: For signers i != 1, publish the decryption share for the remaining ciphertexts, and
+    // their signature shares
     let set = [1, 2, 3];
     #[allow(non_snake_case)]
     let mut W_i_zs = vec![];
     #[allow(non_snake_case)]
     let mut W_i_ds = vec![];
+    let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+    let mut w = <Secp256k1 as Ciphersuite>::F::ZERO;
     for i in 2u16 ..= 3 {
       #[allow(non_snake_case)]
       let W_i_z = z_ciphertext.0.mul(&(&shares[&i] * &delta));
@@ -386,10 +394,15 @@ mod tests {
         W_i_d.mul(&lagrange.to_biguint().unwrap())
       };
       W_i_ds.push(W_i_d);
+
+      // TODO: We need verification shares for y_i, d_i
+      // - 1 to 0-index, - 1 for d_is as signer 0 isn't present in d_is
+      w += (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1) - 1]);
     }
 
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what
-    // remains of z/d
+    // remains of z and d
+    // Signer 1 will be the only party to end up with the signature and is expected to publish it
     #[allow(non_snake_case)]
     let mut W_z = z_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
@@ -408,7 +421,7 @@ mod tests {
     }
 
     println!(
-      "i != 0 decryption shares: {}",
+      "i != 1 decryption shares: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
     );
     segment_time = std::time::Instant::now();
@@ -444,16 +457,11 @@ mod tests {
       "z and d_i decryption: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
     );
-    segment_time = std::time::Instant::now();
+    // segment_time = std::time::Instant::now();
 
-    // Round 4: Publish signature shares (TODO: Inline this with round 3)
-    let mut w = <Secp256k1 as Ciphersuite>::F::ZERO;
-    let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
-    let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-    for i in 1u16 ..= 3 {
-      // TODO: We need verification shares for y_i, d_i
-      w += (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1)]);
-    }
+    // Add the share for signer 1
+    // Create and publish the signature
+    w += (m1_hash * y_is[0]) + (r * d_is[0]);
     let s = w *
       ({
         let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
@@ -463,12 +471,6 @@ mod tests {
       })
       .invert()
       .unwrap();
-
-    println!(
-      "Signature share calculation: {}",
-      std::time::Instant::now().duration_since(segment_time).as_millis()
-    );
-    // segment_time = std::time::Instant::now();
 
     verify(ec_key, m1_hash, r, s);
   }
