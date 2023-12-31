@@ -81,7 +81,7 @@ impl Element {
     let Element { mut a, mut b, mut c, L } = self;
 
     let normalize = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
-      let (mut q, mut r) = (b.div_euclid(&*a), b.mod_floor(&*a));
+      let (mut q, mut r) = (b.div_euclid(&*a), b.rem_euclid(&*a));
       if q.is_odd() {
         r += &*a;
       }
