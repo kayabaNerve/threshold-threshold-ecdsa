@@ -90,14 +90,14 @@ impl ZkDlogOutsideSubgroupProof {
     }
     #[allow(non_snake_case)]
     let Rwc = self.R.add(&w.mul(&c));
-    if self.D.mul(cg.p()).add(&cg.g().mul(&self.e)) != Rwc {
+    if multiexp(&[cg.p(), &self.e], &[&self.D, cg.g()]) != Rwc {
       Err(())?
     }
     let l = Self::transcript_De(transcript, &self.D, &self.e);
     if self.r >= l {
       Err(())?
     }
-    if self.Q.mul(&l).add(&cg.g().mul(&self.r)) != Rwc {
+    if multiexp(&[&l, &self.r], &[&self.Q, cg.g()]) != Rwc {
       Err(())?
     }
     Ok(())
@@ -182,7 +182,7 @@ impl ZkEncryptionProof {
     let s_r = crate::sample_number_less_than(rng, &B);
     let s_m = crate::sample_number_less_than(rng, cg.p());
     #[allow(non_snake_case)]
-    let S1 = public_key.mul(&s_r).add(&cg.f().mul(&s_m));
+    let S1 = multiexp(&[&s_r, &s_m], &[&public_key, cg.f()]);
     #[allow(non_snake_case)]
     let S2 = cg.g().mul(&s_r);
 
@@ -225,10 +225,10 @@ impl ZkEncryptionProof {
     #[allow(non_snake_case)]
     let S2C2c = self.S2.add(&ciphertext.0.mul(&c));
 
-    if self.D1.mul(cg.p()).add(&public_key.mul(&self.e_r)).add(&fum) != S1C1c {
+    if multiexp(&[cg.p(), &self.e_r], &[&self.D1, &public_key]).add(&fum) != S1C1c {
       Err(())?
     }
-    if self.D2.mul(cg.p()).add(&cg.g().mul(&self.e_r)) != S2C2c {
+    if multiexp(&[cg.p(), &self.e_r], &[&self.D2, cg.g()]) != S2C2c {
       Err(())?
     }
     let l = Self::transcript_u_Ds_e(transcript, &self.u_m, &self.D1, &self.D2, &self.e_r);
@@ -236,10 +236,10 @@ impl ZkEncryptionProof {
     if self.r_r >= l {
       Err(())?
     }
-    if self.Q1.mul(&l).add(&public_key.mul(&self.r_r)).add(&fum) != S1C1c {
+    if multiexp(&[&l, &self.r_r], &[&self.Q1, &public_key]).add(&fum) != S1C1c {
       Err(())?
     }
-    if self.Q2.mul(&l).add(&cg.g().mul(&self.r_r)) != S2C2c {
+    if multiexp(&[&l, &self.r_r], &[&self.Q2, cg.g()]) != S2C2c {
       Err(())?
     }
     Ok(())
@@ -293,17 +293,20 @@ impl ZkDlogEqualityProof {
     S: &BigUint,
     generator_0: &Element,
     generator_1: &Element,
-    element_0: &Element,
-    element_1: &Element,
+    element_0: Element,
+    element_1: Element,
   ) -> Result<(), ()> {
     if self.u > ((S * &(BigUint::one() << 256)) + cg.secret_bound()) {
       Err(())?
     }
     let c = Self::transcript_Ts(transcript, &self.T0, &self.T1);
-    if self.T0.add(&element_0.mul(&c)) != generator_0.mul(&self.u) {
+
+    // T0 + (c * e0) == u * g0
+    // T0 == (u * g0) - (c * e0)
+    if multiexp(&[&c, &self.u], &[&element_0.neg(), &generator_0]) != self.T0 {
       Err(())?
     }
-    if self.T1.add(&element_1.mul(&c)) != generator_1.mul(&self.u) {
+    if multiexp(&[&c, &self.u], &[&element_1.neg(), &generator_1]) != self.T1 {
       Err(())?
     }
     Ok(())
@@ -402,8 +405,8 @@ fn dleq() {
       cg.p(),
       &ciphertext.0,
       &ciphertext.1,
-      &ciphertext.0.mul(&dlog),
-      &ciphertext.1.mul(&dlog),
+      ciphertext.0.mul(&dlog),
+      ciphertext.1.mul(&dlog),
     )
     .unwrap();
 }

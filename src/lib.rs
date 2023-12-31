@@ -239,8 +239,8 @@ mod tests {
           cg.p(),
           &x_ciphertext.0,
           &x_ciphertext.1,
-          &xy_i_ciphertext.0,
-          &xy_i_ciphertext.1,
+          xy_i_ciphertext.0.clone(),
+          xy_i_ciphertext.1.clone(),
         )
         .unwrap();
       xy_i_ciphertexts.push(xy_i_ciphertext);
@@ -262,8 +262,8 @@ mod tests {
           cg.p(),
           &k_ciphertext.0,
           &k_ciphertext.1,
-          &ky_i_ciphertext.0,
-          &ky_i_ciphertext.1,
+          ky_i_ciphertext.0.clone(),
+          ky_i_ciphertext.1.clone(),
         )
         .unwrap();
       ky_i_ciphertexts.push(ky_i_ciphertext);
@@ -348,8 +348,8 @@ mod tests {
           &share_max_size,
           cg.g(),
           &z_ciphertext.0,
-          &verification_shares[&i],
-          &W_i_z,
+          verification_shares[&i].clone(),
+          W_i_z.clone(),
         )
         .unwrap();
       let proof = ZkDlogEqualityProof::prove(
@@ -367,8 +367,8 @@ mod tests {
           &share_max_size,
           cg.g(),
           &d_ciphertext.0,
-          &verification_shares[&i],
-          &W_i_d,
+          verification_shares[&i].clone(),
+          W_i_d.clone(),
         )
         .unwrap();
 
@@ -396,6 +396,10 @@ mod tests {
       W_i_ds.push(W_i_d);
 
       // TODO: We need verification shares for y_i, d_i
+      // Technically, a post-round on invalid share could be used for identification
+      // Pros: Doesn't require a more expensive proof in the optimistic path
+      // Cons: A validator can send an invalid message, then go offline when expected to provide a
+      // further proof which would prove their fault, which would be unattributable
       // - 1 to 0-index, - 1 for d_is as signer 0 isn't present in d_is
       w += (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1) - 1]);
     }

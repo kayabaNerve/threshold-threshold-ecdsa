@@ -279,7 +279,8 @@ impl Element {
   }
 
   pub fn mul(&self, scalar: &BigUint) -> Self {
-    let mut table = vec![self.clone()];
+    let mut table = Vec::with_capacity(31);
+    table.push(self.clone());
     for _ in 2 .. 32 {
       table.push(table.last().unwrap().add(self));
     }
@@ -325,6 +326,12 @@ impl Element {
     }
     res.unwrap()
   }
+
+  /*
+  pub fn is_identity(&self) -> bool {
+    self.a.is_one() && self.b.is_one()
+  }
+  */
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -447,7 +454,7 @@ impl ClassGroup {
       b: L,
       L: double_L.clone(),
     };
-    let g = g_init.mul(&p).add(&f.mul(&k));
+    let g = multiexp(&[&p, &k], &[&g_init, &f]);
 
     ClassGroup { B, p, g, f, delta_p }
   }
@@ -503,7 +510,7 @@ impl ClassGroup {
     let r = self.sample_secret(rng);
 
     let c1 = self.g.mul(&r);
-    let c2 = self.f.mul(m).add(&key.mul(&r));
+    let c2 = multiexp(&[&m, &r], &[&self.f, &key]);
     (r, Ciphertext(c1, c2))
   }
 
@@ -554,6 +561,68 @@ impl ClassGroup {
     res.1 = res.1.add(&public_key.mul(&r));
     res
   }
+}
+
+pub(crate) fn multiexp(scalars: &[&BigUint], elements: &[&Element]) -> Element {
+  assert_eq!(scalars.len(), elements.len());
+
+  let mut table = vec![Vec::with_capacity(31); elements.len()];
+  for (i, element) in elements.iter().enumerate() {
+    table[i].push((*element).clone());
+    for _ in 2 .. 32 {
+      let next = table[i].last().unwrap().add(element);
+      table[i].push(next);
+    }
+  }
+
+  let mut res: Option<Element> = None;
+
+  let mut scalar_bits = scalars.iter().map(|scalar| scalar.bits()).collect::<Vec<_>>();
+  scalar_bits.sort_unstable();
+  let scalar_bits = scalar_bits.pop().unwrap();
+
+  let mut bits = vec![0u8; elements.len()];
+  for b in 0 .. scalar_bits {
+    for i in 0 .. elements.len() {
+      if (i == 0) && ((b % 5) == 4) {
+        if let Some(res) = &mut res {
+          for _ in 0 .. 5 {
+            *res = res.double();
+          }
+        }
+      }
+
+      let full_bits = (b % 5) == 4;
+      let b = scalar_bits - 1 - b;
+      bits[i] <<= 1;
+      bits[i] |= if b > scalars[i].bits() { continue } else { u8::from(scalars[i].bit(b)) };
+      if (full_bits) && (bits[i] != 0) {
+        let to_add = &table[i][usize::from(bits[i]) - 1];
+        bits[i] = 0;
+        if let Some(res) = &mut res {
+          *res = res.add(to_add);
+        } else {
+          res = Some(to_add.clone());
+        }
+      }
+    }
+  }
+  if let Some(res) = &mut res {
+    for _ in 0 .. (scalar_bits % 5) {
+      *res = res.double();
+    }
+  }
+  for (i, bits) in bits.into_iter().enumerate() {
+    if bits != 0 {
+      let to_add = &table[i][usize::from(bits) - 1];
+      if let Some(res) = &mut res {
+        *res = res.add(to_add);
+      } else {
+        res = Some(to_add.clone());
+      }
+    }
+  }
+  res.unwrap()
 }
 
 #[test]
