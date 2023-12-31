@@ -43,7 +43,7 @@ impl ZkDlogOutsideSubgroupProof {
     // https://github.com/entropyxyz/crypto-primes/issues/23 for the relevant issue
     let l = generate_prime_with_rng::<{ 256 / 64 }>(
       &mut ChaCha20Rng::from_seed(transcript.rng_seed(b"l")),
-      None,
+      Some(136),
     );
     BigUint::from_bytes_be(l.to_be_bytes().as_ref())
   }
@@ -154,7 +154,7 @@ impl ZkEncryptionProof {
     // https://github.com/entropyxyz/crypto-primes/issues/23 for the relevant issue
     let l = generate_prime_with_rng::<{ 256 / 64 }>(
       &mut ChaCha20Rng::from_seed(transcript.rng_seed(b"l")),
-      None,
+      Some(136),
     );
     BigUint::from_bytes_be(l.to_be_bytes().as_ref())
   }
