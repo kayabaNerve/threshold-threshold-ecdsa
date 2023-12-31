@@ -77,34 +77,31 @@ impl Element {
     Some(res)
   }
 
-  // Algorithm 5.4.2 of A Course in Computational Algebraic Number Theory
   pub fn reduce(self) -> Self {
     let Element { mut a, mut b, mut c, L } = self;
-    let step_2 = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
-      let two_a = &*a << 1;
-      let (mut q, mut r) = (b.div_euclid(&two_a), b.rem_euclid(&two_a));
-      debug_assert_eq!(*b, (&two_a * &q) + &r);
-      if r > *a {
-        r -= &two_a;
-        q += 1;
+
+    let normalize = |a: &mut BigInt, b: &mut BigInt, c: &mut BigInt| {
+      let (mut q, mut r) = (b.div_euclid(&*a), b.rem_euclid(&*a));
+      if q.is_odd() {
+        r += &*a;
       }
-      debug_assert_eq!(*b, (&two_a * &q) + &r);
-      debug_assert!(-&*a < r);
-      debug_assert!(r <= *a);
-      *c -= ((&*b + &r) >> 1) * &q;
-      *b = r;
+      q >>= 1;
+      std::mem::swap(b, &mut r);
+      r += &*b;
+      r >>= 1;
+      *c -= q * r;
     };
-    if !((-&a < b) && (b <= a)) {
-      step_2(&mut a, &mut b, &mut c);
-    }
+
+    normalize(&mut a, &mut b, &mut c);
     while a > c {
-      b = -b;
       std::mem::swap(&mut a, &mut c);
-      step_2(&mut a, &mut b, &mut c);
+      b = -b;
+      normalize(&mut a, &mut b, &mut c);
     }
     if (a == c) && b.is_negative() {
       b = -b;
     }
+
     Element { a, b, c, L }
   }
 
