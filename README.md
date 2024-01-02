@@ -154,7 +154,7 @@ should be implemented and would further reduce the time from the above ideal.
 
 - https://eprint.iacr.org/2015/047 defined a homomorphic encryption scheme from
   class groups
-- https://eprint.iacr.org/2020/085 for a proof a ciphertext encrypts the
+- https://eprint.iacr.org/2020/084 for a proof a ciphertext encrypts the
   discrete log of a provided point (also an earlier work on applying class
   groups to achieve threshold ECDSA)
 - https://eprint.iacr.org/2021/205 for a ZK PoK not requiring repetition
