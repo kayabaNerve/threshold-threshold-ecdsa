@@ -167,15 +167,11 @@ mod tests {
 
       X_is.push(<Secp256k1 as Ciphersuite>::generator() * x_i);
 
-      let r = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
-      // TODO: We need three of these for a 120-bit security level
-      // *with a shared commit phase so they can't be individually re-rolled*
-      let (ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
+      let (_, ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
         &public_key,
-        &r,
         &x_i,
       );
       println!(
@@ -224,16 +220,11 @@ mod tests {
       Y_is.push(Secp256k1::generator() * y_i);
 
       let scalar = BigUint::from_bytes_be(&num_bytes);
-
-      let y_randomness = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
-      // TODO: We need three of these for a 120-bit security level
-      // *with a shared commit phase so they can't be individually re-rolled*
-      let (y_ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
+      let (y_randomness, y_ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
         &public_key,
-        &y_randomness,
         &y_i,
       );
       println!(
@@ -356,15 +347,11 @@ mod tests {
       num_bytes.copy_from_slice((-d_i).to_repr().as_ref());
       d_is.push(d_i);
       D_is.push(D_i);
-      let randomness = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
-      // TODO: We need three of these for a 120-bit security level
-      // *with a shared commit phase so they can't be individually re-rolled*
-      let (ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
+      let (_, ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
         &public_key,
-        &randomness,
         &-d_i,
       );
       println!(

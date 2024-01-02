@@ -12,7 +12,7 @@ use transcript::Transcript;
 
 use ciphersuite::{
   group::{
-    ff::{Field, PrimeFieldBits},
+    ff::{Field, PrimeField, PrimeFieldBits},
     GroupEncoding,
   },
   Ciphersuite,
@@ -113,37 +113,64 @@ impl ZkDlogOutsideSubgroupProof {
   }
 }
 
-// https://eprint.iacr.org/2020/084 Figure 7
-// TODO: Review https://eprint.iacr.org/2022/297
+// https://eprint.iacr.org/2021/205 Algorithm 6, without the column proving the public key is
+// well-formed. The caller is expected to have already checked that.
+// TODO: Review https://eprint.iacr.org/2022/297 as an alternative
 #[allow(non_snake_case)]
 pub struct ZkEncryptionProof<C: Ciphersuite> {
-  t1: Element,
-  t2: Element,
-  T: C::G,
-  u1: BigUint,
-  u2: C::F,
+  S1: Element,
+  S2: Element,
+  S_caret: C::G,
+  u_m: C::F,
+  D1: Element,
+  D2: Element,
+  e_p: BigUint,
+  Q1: Element,
+  Q2: Element,
+  r_p: BigUint,
 }
 
 impl<C: Ciphersuite> ZkEncryptionProof<C> {
   #[allow(non_snake_case)]
-  fn transcript_Ts(
+  fn transcript_Ss(
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
-    t1: &Element,
-    t2: &Element,
-    T: &C::G,
+    S1: &Element,
+    S2: &Element,
+    S_caret: C::G,
   ) -> BigUint {
     transcript.domain_separate(b"ZkEncryptionProof");
-    t1.transcript(b"t1", transcript);
-    t2.transcript(b"t2", transcript);
-    transcript.append_message(b"T", T.to_bytes());
-    crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"k")), cg.p())
+    S1.transcript(b"S1", transcript);
+    S2.transcript(b"S2", transcript);
+    transcript.append_message(b"S_caret", S_caret.to_bytes());
+    crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"c")), cg.p())
   }
 
-  pub fn sample_randomness(rng: &mut (impl RngCore + CryptoRng), cg: &ClassGroup) -> BigUint {
-    #[allow(non_snake_case)]
-    let A = cg.bound() << 40;
-    crate::sample_number_less_than(rng, &A)
+  #[allow(non_snake_case)]
+  fn transcript_u_Ds_es(
+    transcript: &mut impl Transcript,
+    u_m: C::F,
+    D1: &Element,
+    D2: &Element,
+    e_p: &BigUint,
+  ) -> BigUint {
+    transcript.append_message(b"u_m", u_m.to_repr());
+    D1.transcript(b"D1", transcript);
+    D2.transcript(b"D2", transcript);
+    transcript.append_message(b"e_p", e_p.to_bytes_be());
+
+    // The soundness error is 1/2**(bits - log2 bits), so a 136 bit prime should be fine for the
+    // targeted 128-bits of security
+    assert_eq!(Uint::<{ 256 / 64 }>::BITS, 256);
+    // TODO: Does crypto-primes guarantee a uniform distribution? As-current, it iterates from a
+    // random starting point when using generate_prime (generate_safe_prime is distinct regarding
+    // its pattern) which doesn't guarantee true uniformity.
+    // https://github.com/entropyxyz/crypto-primes/issues/23 for the relevant issue
+    let l = generate_prime_with_rng::<{ 256 / 64 }>(
+      &mut ChaCha20Rng::from_seed(transcript.rng_seed(b"l")),
+      Some(136),
+    );
+    BigUint::from_bytes_be(l.to_be_bytes().as_ref())
   }
 
   pub fn prove(
@@ -151,54 +178,64 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
     public_key: &Element,
-    randomness: &BigUint,
     scalar: &C::F,
-  ) -> (Ciphertext, Self) {
-    #[allow(non_snake_case)]
-    let A = cg.bound() << 40;
-    // TODO: The proof specifies g as `cg.g() * t`, where `t` is a random scalar
-    // (potentially private?)
-    // Yet this proof only works if this g is the same as the one used for ciphertexts
-    // Is this g valid? Do we need to ensure the g from setup meets some requirement?
-    let g = cg.g();
-    #[allow(non_snake_case)]
-    let C = cg.p();
-
+  ) -> (BigUint, Ciphertext, Self) {
+    let randomness = crate::sample_number_less_than(rng, &(cg.bound() << 128));
     let mut scalar_uint = BigUint::zero();
     for (i, bit) in scalar.to_le_bits().into_iter().enumerate() {
       scalar_uint += BigUint::from(u8::from(bit)) << i;
     }
-    let ciphertext = cg.encrypt_with_randomness(public_key, randomness, &scalar_uint);
+    let ciphertext = cg.encrypt_with_randomness(public_key, &randomness, &scalar_uint);
 
-    let r1 = crate::sample_number_less_than(rng, &(&A * C * &(BigUint::one() << 40)));
-    let r2 = crate::sample_number_less_than(rng, cg.p());
+    #[allow(non_snake_case)]
+    let B = cg.bound() << (128 + 128 + 2);
 
-    let t1 = g.mul(&r1);
-    let t2 = public_key.mul(&r1).add(&(cg.f().mul(&r2)));
+    // TODO: These are sampled 0 .. B, not -B .. B
+    let s_p = crate::sample_number_less_than(rng, &B);
+    let s_m = C::F::random(rng);
 
-    let mut r2_as_scalar = C::F::ZERO;
-    for b in 0 .. r2.bits() {
-      r2_as_scalar = r2_as_scalar.double();
-      if r2.bit(r2.bits() - b - 1) {
-        r2_as_scalar += C::F::ONE;
-      }
+    let mut s_m_uint = BigUint::zero();
+    for (i, bit) in s_m.to_le_bits().into_iter().enumerate() {
+      s_m_uint += BigUint::from(u8::from(bit)) << i;
     }
 
     #[allow(non_snake_case)]
-    let T = C::generator() * r2_as_scalar;
-    let k = Self::transcript_Ts(cg, transcript, &t1, &t2, &T);
-    let u1 = r1 + (&k * randomness);
-
-    let mut k_as_scalar = C::F::ZERO;
-    for b in 0 .. k.bits() {
-      k_as_scalar = k_as_scalar.double();
-      if k.bit(k.bits() - b - 1) {
-        k_as_scalar += C::F::ONE;
+    let S1 = public_key.mul(&s_p).add(&cg.f().mul(&s_m_uint));
+    #[allow(non_snake_case)]
+    let S2 = cg.g().mul(&s_p);
+    #[allow(non_snake_case)]
+    let S_caret = C::generator() * s_m;
+    let c = Self::transcript_Ss(cg, transcript, &S1, &S2, S_caret);
+    let mut c_as_scalar = C::F::ZERO;
+    for b in 0 .. c.bits() {
+      c_as_scalar = c_as_scalar.double();
+      if c.bit(c.bits() - b - 1) {
+        c_as_scalar += C::F::ONE;
       }
     }
-    let u2 = r2_as_scalar + (k_as_scalar * scalar);
 
-    (ciphertext, Self { t1, t2, T, u1, u2 })
+    let u_p = s_p + (c * &randomness);
+    let u_m = s_m + (c_as_scalar * scalar);
+
+    let d_p = &u_p / cg.p();
+    let e_p = u_p.mod_floor(cg.p());
+
+    #[allow(non_snake_case)]
+    let D1 = public_key.mul(&d_p);
+    #[allow(non_snake_case)]
+    let D2 = cg.g().mul(&d_p);
+
+    let l = Self::transcript_u_Ds_es(transcript, u_m, &D1, &D2, &e_p);
+
+    let q_p = &u_p / &l;
+    let r_p = u_p.mod_floor(&l);
+
+    #[allow(non_snake_case)]
+    let Q1 = public_key.mul(&q_p);
+    #[allow(non_snake_case)]
+    let Q2 = cg.g().mul(&q_p);
+
+    (randomness, ciphertext, Self { S1, S2, S_caret, u_m, D1, D2, e_p, Q1, Q2, r_p })
   }
 
   #[allow(clippy::result_unit_err)]
@@ -210,38 +247,45 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     ciphertext: &Ciphertext,
     point: C::G,
   ) -> Result<(), ()> {
-    #[allow(non_snake_case)]
-    let A = cg.bound() << 40;
-    let g = cg.g();
-    #[allow(non_snake_case)]
-    let C = cg.p();
-
-    let k = Self::transcript_Ts(cg, transcript, &self.t1, &self.t2, &self.T);
-    if self.u1 >= (A * C * ((BigUint::one() << 40) + BigUint::one())) {
-      Err(())?;
-    }
-    if g.mul(&self.u1) != self.t1.add(&ciphertext.0.mul(&k)) {
-      Err(())?;
-    }
-
-    let mut k_as_scalar = C::F::ZERO;
-    for b in 0 .. k.bits() {
-      k_as_scalar = k_as_scalar.double();
-      if k.bit(k.bits() - b - 1) {
-        k_as_scalar += C::F::ONE;
+    let c = Self::transcript_Ss(cg, transcript, &self.S1, &self.S2, self.S_caret);
+    let mut c_as_scalar = C::F::ZERO;
+    for b in 0 .. c.bits() {
+      c_as_scalar = c_as_scalar.double();
+      if c.bit(c.bits() - b - 1) {
+        c_as_scalar += C::F::ONE;
       }
     }
-    if (self.T + (point * k_as_scalar)) != (C::generator() * self.u2) {
+    if (self.S_caret + (point * c_as_scalar)) != (C::generator() * self.u_m) {
       Err(())?;
     }
 
-    let mut u2_uint = BigUint::zero();
-    for (i, bit) in self.u2.to_le_bits().into_iter().enumerate() {
-      u2_uint += BigUint::from(u8::from(bit)) << i;
+    let mut u_m_uint = BigUint::zero();
+    for (i, bit) in self.u_m.to_le_bits().into_iter().enumerate() {
+      u_m_uint += BigUint::from(u8::from(bit)) << i;
     }
-    if public_key.mul(&self.u1).add(&cg.f().mul(&u2_uint)) != self.t2.add(&ciphertext.1.mul(&k)) {
+    let fum = cg.f().mul(&u_m_uint);
+    #[allow(non_snake_case)]
+    let S1C1c = self.S1.add(&ciphertext.1.mul(&c));
+    if self.D1.mul(cg.p()).add(&public_key.mul(&self.e_p)).add(&fum) != S1C1c {
+      Err(())?
+    }
+    #[allow(non_snake_case)]
+    let S2C2c = self.S2.add(&ciphertext.0.mul(&c));
+    if self.D2.mul(cg.p()).add(&cg.g().mul(&self.e_p)) != S2C2c {
+      Err(())?
+    }
+
+    let l = Self::transcript_u_Ds_es(transcript, self.u_m, &self.D1, &self.D2, &self.e_p);
+    if self.r_p >= l {
+      Err(())?
+    }
+    if self.Q1.mul(&l).add(&public_key.mul(&self.r_p)).add(&fum) != S1C1c {
       Err(())?;
     }
+    if self.Q2.mul(&l).add(&cg.g().mul(&self.r_p)) != S2C2c {
+      Err(())?;
+    }
+
     Ok(())
   }
 }
@@ -326,7 +370,7 @@ fn dlog_without_subgroup() {
   use num_traits::FromBytes;
 
   use transcript::RecommendedTranscript;
-  use ciphersuite::{group::ff::PrimeField, Secp256k1};
+  use ciphersuite::Secp256k1;
 
   const LIMBS: usize = 256 / 64;
   let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
@@ -350,7 +394,7 @@ fn encryption() {
   use num_traits::FromBytes;
 
   use transcript::RecommendedTranscript;
-  use ciphersuite::{group::ff::PrimeField, Secp256k1};
+  use ciphersuite::Secp256k1;
 
   const LIMBS: usize = 256 / 64;
   let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
@@ -364,10 +408,9 @@ fn encryption() {
 
   let transcript = || RecommendedTranscript::new(b"Encryption Proof Test");
 
-  let r = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
   let m = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-  let (ciphertext, proof) =
-    ZkEncryptionProof::<Secp256k1>::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &r, &m);
+  let (_randomness, ciphertext, proof) =
+    ZkEncryptionProof::<Secp256k1>::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &m);
   proof
     .verify(&cg, &mut transcript(), &public_key, &ciphertext, Secp256k1::generator() * m)
     .unwrap();
