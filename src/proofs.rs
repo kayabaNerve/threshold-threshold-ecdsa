@@ -4,10 +4,19 @@ use rand_chacha::ChaCha20Rng;
 use crypto_bigint::{Encoding, Uint};
 use crypto_primes::generate_prime_with_rng;
 
-use num_traits::*;
+use num_traits::{Zero, One};
+use num_integer::Integer;
 use num_bigint::*;
 
 use transcript::Transcript;
+
+use ciphersuite::{
+  group::{
+    ff::{Field, PrimeFieldBits},
+    GroupEncoding,
+  },
+  Ciphersuite,
+};
 
 use crate::class_group::*;
 
@@ -65,12 +74,12 @@ impl ZkDlogOutsideSubgroupProof {
     let c = Self::transcript_R(cg, transcript, &R);
 
     let s = k + (&c * x);
-    let (d, e) = (s.div_euclid(cg.p()), s.rem_euclid(cg.p()));
+    let (d, e) = (&s / cg.p(), s.mod_floor(cg.p()));
     #[allow(non_snake_case)]
     let D = cg.g().mul(&d);
 
     let l = Self::transcript_De(transcript, &D, &e);
-    let (q, r) = (s.div_euclid(&l), s.rem_euclid(&l));
+    let (q, r) = (&s / &l, s.mod_floor(&l));
     #[allow(non_snake_case)]
     let Q = cg.g().mul(&q);
 
@@ -104,59 +113,36 @@ impl ZkDlogOutsideSubgroupProof {
   }
 }
 
-// https://eprint.iacr.org/2021/205 Algorithm 5
+// https://eprint.iacr.org/2020/085 Figure 7
 #[allow(non_snake_case)]
-pub struct ZkEncryptionProof {
-  S1: Element,
-  S2: Element,
-  u_m: BigUint,
-  D1: Element,
-  D2: Element,
-  e_r: BigUint,
-  Q1: Element,
-  Q2: Element,
-  r_r: BigUint,
+pub struct ZkEncryptionProof<C: Ciphersuite> {
+  t1: Element,
+  t2: Element,
+  T: C::G,
+  u1: BigUint,
+  u2: C::F,
 }
 
-impl ZkEncryptionProof {
+impl<C: Ciphersuite> ZkEncryptionProof<C> {
   #[allow(non_snake_case)]
-  fn transcript_Ss(
+  fn transcript_Ts(
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
-    S1: &Element,
-    S2: &Element,
+    t1: &Element,
+    t2: &Element,
+    T: &C::G,
   ) -> BigUint {
     transcript.domain_separate(b"ZkEncryptionProof");
-    S1.transcript(b"S1", transcript);
-    S2.transcript(b"S2", transcript);
-    crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"c")), cg.p())
+    t1.transcript(b"t1", transcript);
+    t2.transcript(b"t2", transcript);
+    transcript.append_message(b"T", T.to_bytes());
+    crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"k")), cg.p())
   }
 
-  #[allow(non_snake_case)]
-  fn transcript_u_Ds_e(
-    transcript: &mut impl Transcript,
-    u: &BigUint,
-    D1: &Element,
-    D2: &Element,
-    e: &BigUint,
-  ) -> BigUint {
-    transcript.append_message(b"u", u.to_bytes_be());
-    D1.transcript(b"D1", transcript);
-    D2.transcript(b"D2", transcript);
-    transcript.append_message(b"e", e.to_bytes_be());
-
-    // The soundness error is 1/2**(bits - log2 bits), so a 136 bit prime should be fine for the
-    // targeted 128-bits of security
-    assert_eq!(Uint::<{ 256 / 64 }>::BITS, 256);
-    // TODO: Does crypto-primes guarantee a uniform distribution? As-current, it iterates from a
-    // random starting point when using generate_prime (generate_safe_prime is distinct regarding
-    // its pattern) which doesn't guarantee true uniformity.
-    // https://github.com/entropyxyz/crypto-primes/issues/23 for the relevant issue
-    let l = generate_prime_with_rng::<{ 256 / 64 }>(
-      &mut ChaCha20Rng::from_seed(transcript.rng_seed(b"l")),
-      Some(136),
-    );
-    BigUint::from_bytes_be(l.to_be_bytes().as_ref())
+  pub fn sample_randomness(rng: &mut (impl RngCore + CryptoRng), cg: &ClassGroup) -> BigUint {
+    #[allow(non_snake_case)]
+    let A = cg.bound() << 40;
+    crate::sample_number_less_than(rng, &A)
   }
 
   pub fn prove(
@@ -164,46 +150,54 @@ impl ZkEncryptionProof {
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
     public_key: &Element,
-    message: &BigUint,
+    randomness: &BigUint,
+    scalar: &C::F,
   ) -> (Ciphertext, Self) {
-    // TODO: This randomness is sampled over Bp yet our proof is for p over B * 2**128.
-    // Is this okay?
-    let (randomness, ciphertext) = cg.encrypt(rng, public_key, message);
-    // Increases statistical distance tolerance from 1/(2**80) to 1/(2**128)
-    // TODO: Check this does actually do that as intended
     #[allow(non_snake_case)]
-    let B_2_exp = 128 + 128 + 2;
-    // The bound B (of the class group) is labeled s (accented) by 2021-205 and used to define its
-    // own B
+    let A = cg.bound() << 40;
+    // TODO: The proof specifies g as `cg.g() * t`, where `t` is a random scalar
+    // (potentially private?)
+    // Yet this proof only works if this g is the same as the one used for ciphertexts
+    // Is this g valid? Do we need to ensure the g from setup meets some requirement?
+    let g = cg.g();
     #[allow(non_snake_case)]
-    let B = (BigUint::one() << B_2_exp) * cg.bound();
-    // s_r is also supposed to be sampled [-B, B], see prior comment on this
-    // p -> randomness, s_p -> s_r, u_p -> u_r, d/e_p -> d/e_r, q/r_p -> q/r_r
-    let s_r = crate::sample_number_less_than(rng, &B);
-    let s_m = crate::sample_number_less_than(rng, cg.p());
-    #[allow(non_snake_case)]
-    let S1 = multiexp(&[&s_r, &s_m], &[&public_key, cg.f()]);
-    #[allow(non_snake_case)]
-    let S2 = cg.g().mul(&s_r);
+    let C = cg.p();
 
-    let c = Self::transcript_Ss(cg, transcript, &S1, &S2);
-    let u_r = s_r + (&c * &randomness);
-    let u_m = (s_m + (&c * message)) % cg.p();
+    let mut scalar_uint = BigUint::zero();
+    for (i, bit) in scalar.to_le_bits().into_iter().enumerate() {
+      scalar_uint += BigUint::from(u8::from(bit)) << i;
+    }
+    let ciphertext = cg.encrypt_with_randomness(public_key, randomness, &scalar_uint);
 
-    let (d_r, e_r) = (u_r.div_euclid(cg.p()), u_r.rem_euclid(cg.p()));
-    #[allow(non_snake_case)]
-    let D1 = public_key.mul(&d_r);
-    #[allow(non_snake_case)]
-    let D2 = cg.g().mul(&d_r);
-    let l = Self::transcript_u_Ds_e(transcript, &u_m, &D1, &D2, &e_r);
+    let r1 = crate::sample_number_less_than(rng, &(&A * C * &(BigUint::one() << 40)));
+    let r2 = crate::sample_number_less_than(rng, cg.p());
 
-    let (q_r, r_r) = (u_r.div_euclid(&l), u_r.rem_euclid(&l));
-    #[allow(non_snake_case)]
-    let Q1 = public_key.mul(&q_r);
-    #[allow(non_snake_case)]
-    let Q2 = cg.g().mul(&q_r);
+    let t1 = g.mul(&r1);
+    let t2 = public_key.mul(&r1).add(&(cg.f().mul(&r2)));
 
-    (ciphertext, Self { S1, S2, u_m, D1, D2, e_r, Q1, Q2, r_r })
+    let mut r2_as_scalar = C::F::ZERO;
+    for b in 0 .. r2.bits() {
+      r2_as_scalar = r2_as_scalar.double();
+      if r2.bit(r2.bits() - b - 1) {
+        r2_as_scalar += C::F::ONE;
+      }
+    }
+
+    #[allow(non_snake_case)]
+    let T = C::generator() * r2_as_scalar;
+    let k = Self::transcript_Ts(cg, transcript, &t1, &t2, &T);
+    let u1 = r1 + (&k * randomness);
+
+    let mut k_as_scalar = C::F::ZERO;
+    for b in 0 .. k.bits() {
+      k_as_scalar = k_as_scalar.double();
+      if k.bit(k.bits() - b - 1) {
+        k_as_scalar += C::F::ONE;
+      }
+    }
+    let u2 = r2_as_scalar + (k_as_scalar * scalar);
+
+    (ciphertext, Self { t1, t2, T, u1, u2 })
   }
 
   #[allow(clippy::result_unit_err)]
@@ -213,34 +207,112 @@ impl ZkEncryptionProof {
     transcript: &mut impl Transcript,
     public_key: &Element,
     ciphertext: &Ciphertext,
+    point: C::G,
   ) -> Result<(), ()> {
-    let c = Self::transcript_Ss(cg, transcript, &self.S1, &self.S2);
-    if self.e_r >= *cg.p() {
-      Err(())?
-    }
-    let fum = cg.f().mul(&self.u_m);
-    // 2021-205 uses an inverted ordering for ciphertext members
     #[allow(non_snake_case)]
-    let S1C1c = self.S1.add(&ciphertext.1.mul(&c));
+    let A = cg.bound() << 40;
+    let g = cg.g();
     #[allow(non_snake_case)]
-    let S2C2c = self.S2.add(&ciphertext.0.mul(&c));
+    let C = cg.p();
 
-    if multiexp(&[cg.p(), &self.e_r], &[&self.D1, &public_key]).add(&fum) != S1C1c {
-      Err(())?
+    let k = Self::transcript_Ts(cg, transcript, &self.t1, &self.t2, &self.T);
+    if self.u1 >= (A * C * ((BigUint::one() << 40) + BigUint::one())) {
+      Err(())?;
     }
-    if multiexp(&[cg.p(), &self.e_r], &[&self.D2, cg.g()]) != S2C2c {
-      Err(())?
+    if g.mul(&self.u1) != self.t1.add(&ciphertext.0.mul(&k)) {
+      Err(())?;
     }
-    let l = Self::transcript_u_Ds_e(transcript, &self.u_m, &self.D1, &self.D2, &self.e_r);
 
-    if self.r_r >= l {
-      Err(())?
+    let mut k_as_scalar = C::F::ZERO;
+    for b in 0 .. k.bits() {
+      k_as_scalar = k_as_scalar.double();
+      if k.bit(k.bits() - b - 1) {
+        k_as_scalar += C::F::ONE;
+      }
     }
-    if multiexp(&[&l, &self.r_r], &[&self.Q1, &public_key]).add(&fum) != S1C1c {
-      Err(())?
+    if (self.T + (point * k_as_scalar)) != (C::generator() * self.u2) {
+      Err(())?;
     }
-    if multiexp(&[&l, &self.r_r], &[&self.Q2, cg.g()]) != S2C2c {
-      Err(())?
+
+    let mut u2_uint = BigUint::zero();
+    for (i, bit) in self.u2.to_le_bits().into_iter().enumerate() {
+      u2_uint += BigUint::from(u8::from(bit)) << i;
+    }
+    if public_key.mul(&self.u1).add(&cg.f().mul(&u2_uint)) != self.t2.add(&ciphertext.1.mul(&k)) {
+      Err(())?;
+    }
+    Ok(())
+  }
+}
+
+// https://eprint.iacr.org/2022/1437 5.2
+#[allow(non_snake_case)]
+pub struct ZkRelationProof<const N: usize, const M: usize> {
+  Ts: [Element; N],
+  us: [BigUint; M],
+}
+impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
+  #[allow(non_snake_case)]
+  fn transcript_Ts(transcript: &mut impl Transcript, Ts: &[Element]) -> BigUint {
+    transcript.domain_separate(b"ZkRelationProof");
+    for T in Ts {
+      T.transcript(b"Ts", transcript);
+    }
+    // Any 256-bit number should work as a challenge
+    BigUint::from_bytes_be(&transcript.challenge(b"c").as_ref()[.. 32])
+  }
+
+  #[allow(non_snake_case)]
+  pub fn prove(
+    rng: &mut (impl RngCore + CryptoRng),
+    cg: &ClassGroup,
+    transcript: &mut impl Transcript,
+    Xs: [[&Element; M]; N],
+    ws: [&BigUint; M],
+  ) -> Self {
+    let rs = core::array::from_fn::<_, M, _>(|_| cg.sample_secret(rng));
+    let mut Ts = core::array::from_fn(|_| cg.identity().clone());
+    for i in 0 .. N {
+      #[allow(clippy::needless_range_loop)]
+      for j in 0 .. M {
+        Ts[i] = Ts[i].add(&Xs[i][j].mul(&rs[j]));
+      }
+    }
+    let c = Self::transcript_Ts(transcript, &Ts);
+    let mut us = core::array::from_fn(|_| BigUint::zero());
+    for j in 0 .. M {
+      us[j] = &rs[j] + (&c * ws[j]);
+    }
+    ZkRelationProof { Ts, us }
+  }
+
+  #[allow(non_snake_case, clippy::result_unit_err)]
+  pub fn verify(
+    &self,
+    cg: &ClassGroup,
+    transcript: &mut impl Transcript,
+    // Limit for the discrete logarithms
+    // TODO: Should this be individualized?
+    S: &BigUint,
+    Xs: [[&Element; M]; N],
+    Ys: [&Element; N],
+  ) -> Result<(), ()> {
+    for u in &self.us {
+      if u > &((S * &(BigUint::one() << 256)) + cg.secret_bound()) {
+        Err(())?
+      }
+    }
+
+    let c = Self::transcript_Ts(transcript, &self.Ts);
+    for i in 0 .. N {
+      let lhs = self.Ts[i].add(&Ys[i].mul(&c));
+      let mut rhs = cg.identity().clone();
+      for j in 0 .. M {
+        rhs = rhs.add(&Xs[i][j].mul(&self.us[j]));
+      }
+      if lhs != rhs {
+        Err(())?
+      }
     }
     Ok(())
   }
@@ -285,6 +357,7 @@ impl ZkDlogEqualityProof {
     let u = r + (c * dlog);
     ZkDlogEqualityProof { T0, T1, u }
   }
+
   #[allow(non_snake_case, clippy::result_unit_err)]
   pub fn verify(
     &self,
@@ -316,9 +389,11 @@ impl ZkDlogEqualityProof {
 #[test]
 fn dlog_without_subgroup() {
   use rand_core::OsRng;
-  use transcript::RecommendedTranscript;
 
-  use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
+  use num_traits::FromBytes;
+
+  use transcript::RecommendedTranscript;
+  use ciphersuite::{group::ff::PrimeField, Secp256k1};
 
   const LIMBS: usize = 256 / 64;
   let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
@@ -338,9 +413,11 @@ fn dlog_without_subgroup() {
 #[test]
 fn encryption() {
   use rand_core::OsRng;
-  use transcript::RecommendedTranscript;
 
-  use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
+  use num_traits::FromBytes;
+
+  use transcript::RecommendedTranscript;
+  use ciphersuite::{group::ff::PrimeField, Secp256k1};
 
   const LIMBS: usize = 256 / 64;
   let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
@@ -354,21 +431,24 @@ fn encryption() {
 
   let transcript = || RecommendedTranscript::new(b"Encryption Proof Test");
 
-  let mut m1 = vec![0; 31];
-  OsRng.fill_bytes(&mut m1);
-  let m1 = num_bigint::BigUint::from_be_bytes(&m1);
+  let r = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
+  let m = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
   let (ciphertext, proof) =
-    ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &m1);
-  proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
-  assert_eq!(cg.decrypt(&private_key, &ciphertext).unwrap(), m1);
+    ZkEncryptionProof::<Secp256k1>::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &r, &m);
+  proof
+    .verify(&cg, &mut transcript(), &public_key, &ciphertext, Secp256k1::generator() * m)
+    .unwrap();
+  assert_eq!(cg.decrypt(&private_key, &ciphertext).unwrap(), BigUint::from_be_bytes(&m.to_repr()));
 }
 
 #[test]
 fn dleq() {
   use rand_core::OsRng;
-  use transcript::RecommendedTranscript;
 
-  use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
+  use num_traits::FromBytes;
+
+  use transcript::RecommendedTranscript;
+  use ciphersuite::{group::ff::PrimeField, Secp256k1};
 
   const LIMBS: usize = 256 / 64;
   let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;

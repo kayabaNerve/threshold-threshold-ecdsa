@@ -276,12 +276,17 @@ impl Element {
   }
 
   pub fn mul(&self, scalar: &BigUint) -> Self {
+    if self.is_identity() {
+      return self.clone();
+    }
+
     let mut table = Vec::with_capacity(31);
     table.push(self.clone());
     for _ in 2 .. 32 {
       table.push(table.last().unwrap().add(self));
     }
 
+    // TODO: Return identity on 0 scalar
     let mut res: Option<Self> = None;
 
     let mut bits = 0;
@@ -324,11 +329,9 @@ impl Element {
     res.unwrap()
   }
 
-  /*
   pub fn is_identity(&self) -> bool {
     self.a.is_one() && self.b.is_one()
   }
-  */
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -345,6 +348,7 @@ impl Ciphertext {
 pub struct ClassGroup {
   B: BigUint,
   p: BigUint,
+  identity: Element,
   g: Element,
   f: Element,
   delta_p: BigInt,
@@ -453,7 +457,19 @@ impl ClassGroup {
     };
     let g = multiexp(&[&p, &k], &[&g_init, &f]);
 
-    ClassGroup { B, p, g, f, delta_p }
+    ClassGroup {
+      B,
+      p,
+      identity: Element {
+        a: BigInt::one(),
+        b: BigInt::one(),
+        c: Element::c(&BigInt::one(), BigInt::one(), &delta_p).unwrap(),
+        L: double_L.clone(),
+      },
+      g,
+      f,
+      delta_p,
+    }
   }
 
   pub fn bound(&self) -> &BigUint {
@@ -461,6 +477,9 @@ impl ClassGroup {
   }
   pub fn p(&self) -> &BigUint {
     &self.p
+  }
+  pub fn identity(&self) -> &Element {
+    &self.identity
   }
   pub fn g(&self) -> &Element {
     &self.g
@@ -498,6 +517,17 @@ impl ClassGroup {
     (&self.B * &self.p).bits()
   }
 
+  pub fn encrypt_with_randomness(
+    &self,
+    key: &Element,
+    randomness: &BigUint,
+    message: &BigUint,
+  ) -> Ciphertext {
+    let c1 = self.g.mul(randomness);
+    let c2 = multiexp(&[&message, &randomness], &[&self.f, &key]);
+    Ciphertext(c1, c2)
+  }
+
   pub fn encrypt(
     &self,
     rng: &mut (impl RngCore + CryptoRng),
@@ -505,10 +535,8 @@ impl ClassGroup {
     m: &BigUint,
   ) -> (BigUint, Ciphertext) {
     let r = self.sample_secret(rng);
-
-    let c1 = self.g.mul(&r);
-    let c2 = multiexp(&[&m, &r], &[&self.f, &key]);
-    (r, Ciphertext(c1, c2))
+    let ciphertext = self.encrypt_with_randomness(key, &r, m);
+    (r, ciphertext)
   }
 
   pub(crate) fn solve(&self, X: Element) -> Option<BigUint> {
@@ -549,14 +577,14 @@ impl ClassGroup {
     public_key: &Element,
     ciphertext: &Ciphertext,
     scalar: &BigUint,
-  ) -> Ciphertext {
+  ) -> (BigUint, Ciphertext) {
     let mut res = ciphertext.mul_without_randomness(scalar);
 
     let r = self.sample_secret(rng);
 
     res.0 = res.0.add(&self.g.mul(&r));
     res.1 = res.1.add(&public_key.mul(&r));
-    res
+    (r, res)
   }
 }
 
@@ -665,7 +693,7 @@ fn class_group() {
   assert_eq!(
     cg.decrypt(
       &private_key,
-      &cg.mul(&mut OsRng, &public_key, &cg.encrypt(&mut OsRng, &public_key, &m1).1, &m2)
+      &cg.mul(&mut OsRng, &public_key, &cg.encrypt(&mut OsRng, &public_key, &m1).1, &m2).1,
     )
     .unwrap(),
     (&m1 * &m2) % &secp256k1_mod,

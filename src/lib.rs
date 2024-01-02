@@ -167,16 +167,25 @@ mod tests {
 
       X_is.push(<Secp256k1 as Ciphersuite>::generator() * x_i);
 
-      let message = BigUint::from_bytes_be(&num_bytes);
-      // TODO: Replace this ciphertext validity proof with 2020-084 Fig 7, as comprehensive to X_i
-      let (ciphertext, proof) =
-        ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &message);
+      let r = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
+      // TODO: We need three of these for a 120-bit security level
+      // *with a shared commit phase so they can't be individually re-rolled*
+      let (ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        &public_key,
+        &r,
+        &x_i,
+      );
       println!(
         "Proved for X_i: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis()
       );
       segment_time = std::time::Instant::now();
-      proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
+      proof
+        .verify(&cg, &mut transcript(), &public_key, &ciphertext, *X_is.last().unwrap())
+        .unwrap();
       println!(
         "Verified X_i: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis()
@@ -205,67 +214,103 @@ mod tests {
     let mut xy_i_ciphertexts = vec![];
     let mut ky_i_ciphertexts = vec![];
     for _ in 0 .. 3 {
+      // Decide y
       let mut num_bytes = [0; 32];
       let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
       num_bytes.copy_from_slice(y_i.to_repr().as_ref());
       y_is.push(y_i);
-      // If x_ciphertext has no randomness, this would immediately allow decryption, leaking our
-      // y_i
-      // x_ciphertext does have randomness from every participant participating (including
-      // ourselves)
-      // This randomness will also never be revealed
-      // The eventual decryption of the remaining z_i value is after re-randomization by each
-      // subtractive share
-      // This re-randomization doesn't include new randomness from signer i == 1, meaning a
-      // malicious t-1 may give the decryptor this randomness, leaking all prior values
-      // For the decryptor to notice and do so would require they also be malicious, preserving the
-      // t threshold
+
       let scalar = BigUint::from_bytes_be(&num_bytes);
-      let xy_i_ciphertext = x_ciphertext.mul_without_randomness(&scalar);
 
-      // Prove this was correctly scaled
-      let proof = ZkDlogEqualityProof::prove(
+      let y_randomness = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
+      // TODO: We need three of these for a 120-bit security level
+      // *with a shared commit phase so they can't be individually re-rolled*
+      let (y_ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
-        &x_ciphertext.0,
-        &x_ciphertext.1,
-        &scalar,
+        &public_key,
+        &y_randomness,
+        &y_i,
       );
+      proof
+        .verify(&cg, &mut transcript(), &public_key, &y_ciphertext, Secp256k1::generator() * y_i)
+        .unwrap();
+
+      // Create xy_i_ciphertext and ky_i_ciphertext
+      let (xy_randomness, xy_i_ciphertext) =
+        cg.mul(&mut OsRng, &public_key, &x_ciphertext, &scalar);
+      let (ky_randomness, ky_i_ciphertext) =
+        cg.mul(&mut OsRng, &public_key, &k_ciphertext, &scalar);
+
+      // For 2022-1437 5.2, a scaled ciphertext proof can be created with:
+      // m=2, ws [a, y]
+      // i=2, Ys [(a + by)G, (a + by)K + xyF]
+      //      Xs [[G, bG], [K, bK + xF]]
+      //
+      // For an additionally proven Y_i with ciphertext aG, aK + yF, we need to add 2 is:
+      // +Ys [aG, aK + yF]
+      // +Xs [[G, Identity], [K, F]]
+      //
+      // And then finally, since we need to prove both xy and ky, we add:
+      // +m for randomness c, padding prior Xs with Identity
+      // +Ys [ky_i_ciphertext.0, ky_i_ciphertext.1]
+      // +Xs [[Identity, k_ciphertext.0, G], [Identity, k_ciphertext.1, K]]
+      //
+      // Re-organized, and with distinct randomness for the y_i ciphertext and further usage, we
+      // create a m=4, i=6 we organize as follows:
+      // a = y randomness
+      // b = xy randomness
+      // c = ky randomness
+      // ws = [a, b, c, y]
+      // Ys = [..y_ciphertext, ..xy_ciphertext, ..ky_ciphertext]
+      // Xs = [
+      //   [G,        Identity, Identity, Identity],
+      //   [K,        Identity, Identity, F],
+      //   [Identity, G,        Identity, x_ciphertext.0],
+      //   [Identity, K,        Identity, x_ciphertext.1],
+      //   [Identity, Identity, G,        k_ciphertext.0],
+      //   [Identity, Identity, K,        k_ciphertext.1],
+      // ]
+      #[rustfmt::skip]
+      let proof = ZkRelationProof::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        [
+          [cg.g(),        cg.identity(), cg.identity(), cg.identity()],
+          [&public_key,   cg.identity(), cg.identity(), cg.f()],
+          [cg.identity(), cg.g(),        cg.identity(), &x_ciphertext.0],
+          [cg.identity(), &public_key,   cg.identity(), &x_ciphertext.1],
+          [cg.identity(), cg.identity(), cg.g(),        &k_ciphertext.0],
+          [cg.identity(), cg.identity(), &public_key,   &k_ciphertext.1],
+        ],
+        [&y_randomness, &xy_randomness, &ky_randomness, &scalar],
+      );
+      #[rustfmt::skip]
       proof
         .verify(
           &cg,
           &mut transcript(),
-          cg.p(),
-          &x_ciphertext.0,
-          &x_ciphertext.1,
-          xy_i_ciphertext.0.clone(),
-          xy_i_ciphertext.1.clone(),
+          // Assumes the ZkEncryptionProof randomness bound is <= this
+          &cg.secret_bound(),
+          [
+            [cg.g(),        cg.identity(), cg.identity(), cg.identity()],
+            [&public_key,   cg.identity(), cg.identity(), cg.f()],
+            [cg.identity(), cg.g(),        cg.identity(), &x_ciphertext.0],
+            [cg.identity(), &public_key,   cg.identity(), &x_ciphertext.1],
+            [cg.identity(), cg.identity(), cg.g(),        &k_ciphertext.0],
+            [cg.identity(), cg.identity(), &public_key,   &k_ciphertext.1],
+          ],
+          [
+            &y_ciphertext.0,    &y_ciphertext.1,
+            &xy_i_ciphertext.0, &xy_i_ciphertext.1,
+            &ky_i_ciphertext.0, &ky_i_ciphertext.1,
+          ],
         )
         .unwrap();
+
       xy_i_ciphertexts.push(xy_i_ciphertext);
-
-      // Also perform multiplication of k by y
-      let ky_i_ciphertext = k_ciphertext.mul_without_randomness(&scalar);
-      let proof = ZkDlogEqualityProof::prove(
-        &mut OsRng,
-        &cg,
-        &mut transcript(),
-        &k_ciphertext.0,
-        &k_ciphertext.1,
-        &scalar,
-      );
-      proof
-        .verify(
-          &cg,
-          &mut transcript(),
-          cg.p(),
-          &k_ciphertext.0,
-          &k_ciphertext.1,
-          ky_i_ciphertext.0.clone(),
-          ky_i_ciphertext.1.clone(),
-        )
-        .unwrap();
       ky_i_ciphertexts.push(ky_i_ciphertext);
     }
 
@@ -277,16 +322,31 @@ mod tests {
 
     // Also, for signers i != 1, publish the subtractive shares of d_i and signature shares
     let mut d_is = vec![];
+    #[allow(non_snake_case)]
+    let mut D_is = vec![];
     let mut d_i_ciphertexts = vec![];
     for _ in 1 .. 3 {
       let mut num_bytes = [0; 32];
       let d_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+      #[allow(non_snake_case)]
+      let D_i = <Secp256k1 as Ciphersuite>::generator() * d_i;
       num_bytes.copy_from_slice((-d_i).to_repr().as_ref());
       d_is.push(d_i);
-      let message = BigUint::from_bytes_be(&num_bytes);
-      let (ciphertext, proof) =
-        ZkEncryptionProof::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &message);
-      proof.verify(&cg, &mut transcript(), &public_key, &ciphertext).unwrap();
+      D_is.push(D_i);
+      let randomness = ZkEncryptionProof::<Secp256k1>::sample_randomness(&mut OsRng, &cg);
+      // TODO: We need three of these for a 120-bit security level
+      // *with a shared commit phase so they can't be individually re-rolled*
+      let (ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        &public_key,
+        &randomness,
+        &-d_i,
+      );
+      proof
+        .verify(&cg, &mut transcript(), &public_key, &ciphertext, -D_is.last().unwrap())
+        .unwrap();
       d_i_ciphertexts.push(ciphertext);
     }
 
@@ -333,6 +393,7 @@ mod tests {
 
       let share_max_size =
         BigUint::one() << (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits());
+      // TODO: Merge these ZkDlogEqualityProofs
       let proof = ZkDlogEqualityProof::prove(
         &mut OsRng,
         &cg,
@@ -395,13 +456,13 @@ mod tests {
       };
       W_i_ds.push(W_i_d);
 
-      // TODO: We need verification shares for y_i, d_i
       // Technically, a post-round on invalid share could be used for identification
       // Pros: Doesn't require a more expensive proof in the optimistic path
       // Cons: A validator can send an invalid message, then go offline when expected to provide a
       // further proof which would prove their fault, which would be unattributable
       // - 1 to 0-index, - 1 for d_is as signer 0 isn't present in d_is
       w += (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1) - 1]);
+      // TODO: Demo share verification
     }
 
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what
