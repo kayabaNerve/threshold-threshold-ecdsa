@@ -211,6 +211,8 @@ mod tests {
 
     // Round 2: Perform multiplication of the sum nonce by our shares of y
     let mut y_is = vec![];
+    #[allow(non_snake_case)]
+    let mut Y_is = vec![];
     let mut xy_i_ciphertexts = vec![];
     let mut ky_i_ciphertexts = vec![];
     for _ in 0 .. 3 {
@@ -219,6 +221,7 @@ mod tests {
       let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
       num_bytes.copy_from_slice(y_i.to_repr().as_ref());
       y_is.push(y_i);
+      Y_is.push(Secp256k1::generator() * y_i);
 
       let scalar = BigUint::from_bytes_be(&num_bytes);
 
@@ -234,7 +237,7 @@ mod tests {
         &y_i,
       );
       proof
-        .verify(&cg, &mut transcript(), &public_key, &y_ciphertext, Secp256k1::generator() * y_i)
+        .verify(&cg, &mut transcript(), &public_key, &y_ciphertext, *Y_is.last().unwrap())
         .unwrap();
 
       // Create xy_i_ciphertext and ky_i_ciphertext
@@ -461,8 +464,12 @@ mod tests {
       // Cons: A validator can send an invalid message, then go offline when expected to provide a
       // further proof which would prove their fault, which would be unattributable
       // - 1 to 0-index, - 1 for d_is as signer 0 isn't present in d_is
-      w += (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1) - 1]);
-      // TODO: Demo share verification
+      let w_i = (m1_hash * y_is[usize::from(i - 1)]) + (r * d_is[usize::from(i - 1) - 1]);
+      assert_eq!(
+        Secp256k1::generator() * w_i,
+        (Y_is[usize::from(i - 1)] * m1_hash) + (D_is[usize::from(i - 1) - 1] * r)
+      );
+      w += w_i;
     }
 
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what
