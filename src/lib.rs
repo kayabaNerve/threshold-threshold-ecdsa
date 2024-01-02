@@ -236,15 +236,31 @@ mod tests {
         &y_randomness,
         &y_i,
       );
+      println!(
+        "Proved for Y_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
       proof
         .verify(&cg, &mut transcript(), &public_key, &y_ciphertext, *Y_is.last().unwrap())
         .unwrap();
+      println!(
+        "Verified Y_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
 
       // Create xy_i_ciphertext and ky_i_ciphertext
       let (xy_randomness, xy_i_ciphertext) =
         cg.mul(&mut OsRng, &public_key, &x_ciphertext, &scalar);
       let (ky_randomness, ky_i_ciphertext) =
         cg.mul(&mut OsRng, &public_key, &k_ciphertext, &scalar);
+
+      println!(
+        "Created xy_i ky_i ciphertexts: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis(),
+      );
+      segment_time = std::time::Instant::now();
 
       // For 2022-1437 5.2, a scaled ciphertext proof can be created with:
       // m=2, ws [a, y]
@@ -290,6 +306,11 @@ mod tests {
         ],
         [&y_randomness, &xy_randomness, &ky_randomness, &scalar],
       );
+      println!(
+        "Proved for xy_i ky_i ciphertexts: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis(),
+      );
+      segment_time = std::time::Instant::now();
       #[rustfmt::skip]
       proof
         .verify(
@@ -312,16 +333,15 @@ mod tests {
           ],
         )
         .unwrap();
+      println!(
+        "Verified xy_i ky_i ciphertexts: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis(),
+      );
+      segment_time = std::time::Instant::now();
 
       xy_i_ciphertexts.push(xy_i_ciphertext);
       ky_i_ciphertexts.push(ky_i_ciphertext);
     }
-
-    println!(
-      "xy and ky multiplications: {}",
-      std::time::Instant::now().duration_since(segment_time).as_millis()
-    );
-    segment_time = std::time::Instant::now();
 
     // Also, for signers i != 1, publish the subtractive shares of d_i and signature shares
     let mut d_is = vec![];
@@ -347,9 +367,19 @@ mod tests {
         &randomness,
         &-d_i,
       );
+      println!(
+        "Proved for D_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
       proof
         .verify(&cg, &mut transcript(), &public_key, &ciphertext, -D_is.last().unwrap())
         .unwrap();
+      println!(
+        "Verified D_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
       d_i_ciphertexts.push(ciphertext);
     }
 
@@ -396,45 +426,34 @@ mod tests {
 
       let share_max_size =
         BigUint::one() << (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits());
-      // TODO: Merge these ZkDlogEqualityProofs
-      let proof = ZkDlogEqualityProof::prove(
+
+      // Prove the encryption shares are well-formed
+      let proof = ZkRelationProof::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
-        cg.g(),
-        &z_ciphertext.0,
-        &(&shares[&i] * &delta),
+        [[cg.g()], [&z_ciphertext.0], [&d_ciphertext.0]],
+        [&(&shares[&i] * &delta)],
       );
+      println!(
+        "Calculated and proved for decryption shares: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
       proof
         .verify(
           &cg,
           &mut transcript(),
           &share_max_size,
-          cg.g(),
-          &z_ciphertext.0,
-          verification_shares[&i].clone(),
-          W_i_z.clone(),
+          [[cg.g()], [&z_ciphertext.0], [&d_ciphertext.0]],
+          [&verification_shares[&i], &W_i_z, &W_i_d],
         )
         .unwrap();
-      let proof = ZkDlogEqualityProof::prove(
-        &mut OsRng,
-        &cg,
-        &mut transcript(),
-        cg.g(),
-        &d_ciphertext.0,
-        &(&shares[&i] * &delta),
+      println!(
+        "Verified decryption shares: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
       );
-      proof
-        .verify(
-          &cg,
-          &mut transcript(),
-          &share_max_size,
-          cg.g(),
-          &d_ciphertext.0,
-          verification_shares[&i].clone(),
-          W_i_d.clone(),
-        )
-        .unwrap();
+      segment_time = std::time::Instant::now();
 
       // Technically, the lagrange coefficient can be applied after collecting shares
       // The provided lagrange function inlines the delta multiplication so it can return a single
@@ -470,6 +489,11 @@ mod tests {
         (Y_is[usize::from(i - 1)] * m1_hash) + (D_is[usize::from(i - 1) - 1] * r)
       );
       w += w_i;
+      println!(
+        "Calculated ECDSA share: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
     }
 
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what
@@ -529,7 +553,7 @@ mod tests {
       "z and d_i decryption: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
     );
-    // segment_time = std::time::Instant::now();
+    segment_time = std::time::Instant::now();
 
     // Add the share for signer 1
     // Create and publish the signature
@@ -543,6 +567,9 @@ mod tests {
       })
       .invert()
       .unwrap();
+
+    println!("Final share: {}", std::time::Instant::now().duration_since(segment_time).as_millis());
+    // segment_time = std::time::Instant::now();
 
     verify(ec_key, m1_hash, r, s);
   }
