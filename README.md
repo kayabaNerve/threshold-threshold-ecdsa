@@ -2,6 +2,8 @@
 
 A threshold ECDSA experiment premised on threshold encryption for the MtA.
 
+This achieves a O(n) signing protocol without a trusted setup (if correct).
+
 ### Theory
 
 [Low-Bandwidth Threshold ECDSA via Pseudorandom Correlation Generators](https://eprint.iacr.org/2021/1587)
@@ -82,20 +84,54 @@ still:
 This work uses class groups, whose keys are any integer in the multiplicative
 group for the modulus, and accordingly does not face such difficulties.
 
+### Should I use this?
+
+# No.
+
+### What needs to be done before anyone uses this?
+
+- The protocol implemented needs to be formalized and have its security proven.
+- The protocol should be modified to achieve concurrent security.
+- The security parameters used (along with other constants) need review.
+- The code demonstrates signing. Some parts of the DKG are shimmed. Said shims
+  would need removal.
+- This demonstration would need to be transformed into a proper library.
+- Secret-involving math operations need to be masked to prevent side-channel
+  attacks.
+- Secret variables need to be zeroized post-use.
+- The multiexp function should have much more liberal usage.
+- A batch verifier should be implemented.
+- Every public key and generator should be tabled.
+- rayon should be used for internal parallelism.
+
+### Will you do this?
+
+I don't currently have the time nor financial incentive.
+
+### Achieving Concurrent Security
+
+I believe it's theoretically possible to apply the techniques of
+https://eprint.iacr.org/2018/417 not to produce an unintended signature, yet to
+cause decryption of an unintended ciphertext. This is due to how if the sum of
+a list of ciphertexts' randomness are equal to a distinct ciphertext's
+randomness, decrypting every ciphertext in the list will enable decrypting the
+distinct ciphertext.
+
+Preventing this should be possible via pre-committing to the randomness used for
+every decrypted ciphertext. While this would add a round, round one's randomness
+isn't present in any decrypted ciphertext. It's further permutated in round two,
+meaning a commitment in round one to the independent permutations in round two
+(along with the randomness used in proofs for round two onwards) should be
+sufficient.
+
 ### References
 
-- https://eprint.iacr.org/2015/047.pdf defined class groups
-- https://eprint.iacr.org/2022/1437.pdf applies class groups to a
+- https://eprint.iacr.org/2015/047 defined class groups
+- https://eprint.iacr.org/2020/085 for a proof a ciphertext encrypts the
+  discrete log of a provided point (also an earlier work on applying class
+  groups to achieve threshold ECDSA)
+- https://eprint.iacr.org/2021/205 for a ZK PoK not requiring repetition
+- https://eprint.iacr.org/2021/291 as the most modern application of class
+  groups to threshold ECDSA (ignoring partial improvements)
+- https://eprint.iacr.org/2022/1437 applies class groups to a
   threshold-encryption use-case
-
-### TODO:
-
-- Remove reliance on the Strong Root Assumption, if present and possible
-- Clean code with a competent API
-- Proofs (theoretical)
-- Make constant time, as possible, and/or mask secret-involving calculations
-- Correct various security parameters
-- Decentralized calculation of the K ciphertext
-- Proven calculation of X
-- Share verification
-- Achieve concurrent security

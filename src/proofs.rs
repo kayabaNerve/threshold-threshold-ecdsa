@@ -114,6 +114,7 @@ impl ZkDlogOutsideSubgroupProof {
 }
 
 // https://eprint.iacr.org/2020/085 Figure 7
+// TODO: Review https://eprint.iacr.org/2022/297
 #[allow(non_snake_case)]
 pub struct ZkEncryptionProof<C: Ciphersuite> {
   t1: Element,
