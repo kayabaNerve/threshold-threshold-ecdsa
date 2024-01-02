@@ -430,7 +430,6 @@ impl ClassGroup {
     let abs_delta_k_cubed: BigUint = delta_k.abs().to_biguint().unwrap().pow(3u8);
     let mut quad_root = abs_delta_k_cubed.nth_root(4);
     // Make this a ceil quad root instead of a floor quad root with a binary search until overflow
-    // TODO: Just use this from the get go, instead of the sqrt calls?
     let mut jump: BigUint = BigUint::from(1u8) << (((4096 + 2048) / 4) - 3);
     while !jump.is_zero() {
       while quad_root.clone().pow(4u8) < abs_delta_k_cubed {
