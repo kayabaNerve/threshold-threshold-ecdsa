@@ -159,5 +159,6 @@ should be implemented and would further reduce the time from the above ideal.
 - https://eprint.iacr.org/2021/205 for a ZK PoK not requiring repetition
 - https://eprint.iacr.org/2021/291 as the most modern application of class
   groups to threshold ECDSA (ignoring partial improvements)
+- https://eprint.iacr.org/2021/1587 for the aforementioned ECDSA transformation
 - https://eprint.iacr.org/2022/1437 applies class groups to a
   threshold-encryption use-case
