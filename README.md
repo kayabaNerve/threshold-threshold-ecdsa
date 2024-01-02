@@ -2,7 +2,9 @@
 
 A threshold ECDSA experiment premised on threshold encryption for the MtA.
 
-This achieves a O(n) signing protocol without a trusted setup (if correct).
+This achieves a 3-round O(n) signing protocol with identifiable aborts and
+without a trusted setup (if correct). The message only needs to be known by the
+last round, enabling the first two to be preprocessed.
 
 ### Theory
 
@@ -90,12 +92,17 @@ group for the modulus, and accordingly does not face such difficulties.
 
 ### What needs to be done before anyone uses this?
 
+- The proof used to prove a ciphertext contains a discrete logarithm of a point
+  needs to be run in parallel (currently, it runs once achieving 2**40
+  security).
 - The protocol implemented needs to be formalized and have its security proven.
 - The protocol should be modified to achieve concurrent security.
 - The security parameters used (along with other constants) need review.
 - The code demonstrates signing. Some parts of the DKG are shimmed. Said shims
   would need removal.
-- This demonstration would need to be transformed into a proper library.
+- This demonstration would need to be transformed into a proper library (with
+  much cleaner code. Notably, `Element` should implement the standard math
+  traits for operator-based usage).
 - Secret-involving math operations need to be masked to prevent side-channel
   attacks.
 - Secret variables need to be zeroized post-use.
@@ -123,6 +130,25 @@ isn't present in any decrypted ciphertext. It's further permutated in round two,
 meaning a commitment in round one to the independent permutations in round two
 (along with the randomness used in proofs for round two onwards) should be
 sufficient.
+
+### Other Notes
+
+This library uses additive notation, not multiplicative, in contrast with most
+literature on class groups. It also denotes `t` as the amount needed to produce
+a signature (not the amount allowed to be corrupted).
+
+This library also prefers `BigUint` for its scalar type, not `BigInt`, an
+artifact from my experience being based on elliptic curves which needs to be
+corrected in order to avoid a halved space.
+
+Ideally, this ends up taking <10s for the prover (it does already, yet
+introducing masking would slow it down) and <2s per other party. Across 4
+threads, this would enable a t=50 ECDSA in 27.5s.
+
+This library does not implement any of the maps described in
+https://eprint.iacr.org/2022/1466, and doesn't have an optimal reduction
+algorithm (always using big integers and never native words for parts). Those
+should be implemented and would further reduce the time from the above ideal.
 
 ### References
 
