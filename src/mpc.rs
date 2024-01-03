@@ -101,7 +101,6 @@ impl IntegerSecretSharing {
     // The paper specifies to prove all are valid such as via DLog proofs, yet the later proof only
     // requires the first element have a known DLog for the prover. Can a PedPoP-esque approach be
     // taken to remove the additional proofs? (TODO)
-    #[allow(non_snake_case)]
     let mut commitments = vec![];
     commitments.push(CommitmentWithProof::new(rng, cg, transcript, &alpha));
     for r in &r {
@@ -111,7 +110,6 @@ impl IntegerSecretSharing {
     #[cfg(debug_assertions)]
     for (i, y) in &y {
       let mut eval = commitments[0].commitment.mul(&(&delta * &delta));
-      #[allow(non_snake_case)]
       for (C_i, C) in commitments[1 ..].iter().enumerate() {
         let C_i = C_i + 1;
         let i = BigUint::from(*i);

@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use rand_core::{RngCore, CryptoRng};
 
 use crypto_bigint::{Encoding, Uint};

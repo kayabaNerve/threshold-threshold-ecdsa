@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use rand_core::{RngCore, CryptoRng};
 
 use num_bigint::BigUint;
@@ -114,7 +116,6 @@ mod tests {
       if let Some(public_key) = &mut public_key {
         for i in 1u16 ..= 4u16 {
           let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
-          #[allow(non_snake_case)]
           for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
             let C_i = C_i + 1;
             let i = BigUint::from(i);
@@ -128,7 +129,6 @@ mod tests {
       } else {
         for i in 1u16 ..= 4u16 {
           let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
-          #[allow(non_snake_case)]
           for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
             let C_i = C_i + 1;
             let i = BigUint::from(i);
@@ -156,7 +156,6 @@ mod tests {
 
     // Round 1: Publish additive shares of the nonce
     let mut x_is = vec![];
-    #[allow(non_snake_case)]
     let mut X_is = vec![];
     let mut x_i_ciphertexts = vec![];
     for _ in 0 .. 3 {
@@ -189,7 +188,6 @@ mod tests {
       segment_time = std::time::Instant::now();
       x_i_ciphertexts.push(ciphertext);
     }
-    #[allow(non_snake_case)]
     let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
     let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
 
@@ -207,7 +205,6 @@ mod tests {
 
     // Round 2: Perform multiplication of the sum nonce by our shares of y
     let mut y_is = vec![];
-    #[allow(non_snake_case)]
     let mut Y_is = vec![];
     let mut xy_i_ciphertexts = vec![];
     let mut ky_i_ciphertexts = vec![];
@@ -336,13 +333,11 @@ mod tests {
 
     // Also, for signers i != 1, publish the subtractive shares of d_i and signature shares
     let mut d_is = vec![];
-    #[allow(non_snake_case)]
     let mut D_is = vec![];
     let mut d_i_ciphertexts = vec![];
     for _ in 1 .. 3 {
       let mut num_bytes = [0; 32];
       let d_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-      #[allow(non_snake_case)]
       let D_i = <Secp256k1 as Ciphersuite>::generator() * d_i;
       num_bytes.copy_from_slice((-d_i).to_repr().as_ref());
       d_is.push(d_i);
@@ -399,16 +394,12 @@ mod tests {
     // Round 3: For signers i != 1, publish the decryption share for the remaining ciphertexts, and
     // their signature shares
     let set = [1, 2, 3];
-    #[allow(non_snake_case)]
     let mut W_i_zs = vec![];
-    #[allow(non_snake_case)]
     let mut W_i_ds = vec![];
     let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
     let mut w = <Secp256k1 as Ciphersuite>::F::ZERO;
     for i in 2u16 ..= 3 {
-      #[allow(non_snake_case)]
       let W_i_z = z_ciphertext.0.mul(&(&shares[&i] * &delta));
-      #[allow(non_snake_case)]
       let W_i_d = d_ciphertext.0.mul(&(&shares[&i] * &delta));
 
       let share_max_size =
@@ -449,7 +440,6 @@ mod tests {
       // While we could rewrite the lagrange function to return a (numerator, denominator), we
       // don't need post-determinism of the lagrange coefficient
       let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
-      #[allow(non_snake_case)]
       let W_i_z = if lagrange < BigInt::zero() {
         W_i_z.neg().mul(&(-lagrange.clone()).to_biguint().unwrap())
       } else {
@@ -457,7 +447,6 @@ mod tests {
       };
       W_i_zs.push(W_i_z);
 
-      #[allow(non_snake_case)]
       let W_i_d = if lagrange < BigInt::zero() {
         W_i_d.neg().mul(&(-lagrange).to_biguint().unwrap())
       } else {
@@ -486,19 +475,15 @@ mod tests {
     // For signer 1, calculate and keep the final decryption share to be the sole decryptor of what
     // remains of z and d
     // Signer 1 will be the only party to end up with the signature and is expected to publish it
-    #[allow(non_snake_case)]
     let mut W_z = z_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
     );
-    #[allow(non_snake_case)]
     for W_i_z in W_i_zs {
       W_z = W_z.add(&W_i_z);
     }
-    #[allow(non_snake_case)]
     let mut W_d = d_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
     );
-    #[allow(non_snake_case)]
     for W_i_d in W_i_ds {
       W_d = W_d.add(&W_i_d);
     }
@@ -511,7 +496,6 @@ mod tests {
 
     // Recover the messages
     let z = {
-      #[allow(non_snake_case)]
       let M = z_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W_z.neg());
       let value_scaled_by = (&delta * &delta * &delta) % cg.p();
       // Invert value_scaled_by over p
@@ -521,7 +505,6 @@ mod tests {
     };
 
     let d_i_1 = {
-      #[allow(non_snake_case)]
       let M = d_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W_d.neg());
       let value_scaled_by = (&delta * &delta * &delta) % cg.p();
       // Invert value_scaled_by over p

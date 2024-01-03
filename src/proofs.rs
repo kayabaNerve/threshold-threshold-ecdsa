@@ -21,7 +21,6 @@ use ciphersuite::{
 use crate::class_group::*;
 
 // https://eprint.iacr.org/2021/205 Algorithm 2
-#[allow(non_snake_case)]
 pub struct ZkDlogOutsideSubgroupProof {
   R: Element,
   D: Element,
@@ -36,13 +35,11 @@ impl ZkDlogOutsideSubgroupProof {
     element.transcript(b"element", transcript);
   }
 
-  #[allow(non_snake_case)]
   fn transcript_R(cg: &ClassGroup, transcript: &mut impl Transcript, R: &Element) -> BigUint {
     R.transcript(b"R", transcript);
     crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"c")), cg.p())
   }
 
-  #[allow(non_snake_case)]
   fn transcript_De(transcript: &mut impl Transcript, D: &Element, e: &BigUint) -> BigUint {
     D.transcript(b"D", transcript);
     transcript.append_message(b"e", e.to_bytes_be());
@@ -74,19 +71,16 @@ impl ZkDlogOutsideSubgroupProof {
     // later when s is calculated)
     let k = cg.sample_secret(rng);
     // If this is moved off `g`, we MUST transcript the g used
-    #[allow(non_snake_case)]
     let R = cg.g().mul(&k);
 
     let c = Self::transcript_R(cg, transcript, &R);
 
     let s = k + (&c * x);
     let (d, e) = (&s / cg.p(), s.mod_floor(cg.p()));
-    #[allow(non_snake_case)]
     let D = cg.g().mul(&d);
 
     let l = Self::transcript_De(transcript, &D, &e);
     let (q, r) = (&s / &l, s.mod_floor(&l));
-    #[allow(non_snake_case)]
     let Q = cg.g().mul(&q);
 
     ZkDlogOutsideSubgroupProof { R, D, e, Q, r }
@@ -105,7 +99,6 @@ impl ZkDlogOutsideSubgroupProof {
     if self.e >= *cg.p() {
       Err(())?
     }
-    #[allow(non_snake_case)]
     let Rwc = self.R.add(&w.mul(&c));
     if multiexp(&[cg.p(), &self.e], &[&self.D, cg.g()]) != Rwc {
       Err(())?
@@ -124,7 +117,6 @@ impl ZkDlogOutsideSubgroupProof {
 // https://eprint.iacr.org/2021/205 Algorithm 6, without the column proving the public key is
 // well-formed. The caller is expected to have already checked that.
 // TODO: Review https://eprint.iacr.org/2022/297 as an alternative
-#[allow(non_snake_case)]
 pub struct ZkEncryptionProof<C: Ciphersuite> {
   S1: Element,
   S2: Element,
@@ -152,7 +144,6 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     transcript.append_message(b"point", point.to_bytes());
   }
 
-  #[allow(non_snake_case)]
   fn transcript_Ss(
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
@@ -166,7 +157,6 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"c")), cg.p())
   }
 
-  #[allow(non_snake_case)]
   fn transcript_u_Ds_es(
     transcript: &mut impl Transcript,
     u_m: C::F,
@@ -209,7 +199,6 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
 
     Self::transcript_statement(transcript, public_key, &ciphertext, C::generator() * *scalar);
 
-    #[allow(non_snake_case)]
     let B = cg.bound() << (128 + 128 + 2);
 
     // TODO: These are sampled 0 .. B, not -B .. B
@@ -221,11 +210,8 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
       s_m_uint += BigUint::from(u8::from(bit)) << i;
     }
 
-    #[allow(non_snake_case)]
     let S1 = public_key.mul(&s_p).add(&cg.f().mul(&s_m_uint));
-    #[allow(non_snake_case)]
     let S2 = cg.g().mul(&s_p);
-    #[allow(non_snake_case)]
     let S_caret = C::generator() * s_m;
     let c = Self::transcript_Ss(cg, transcript, &S1, &S2, S_caret);
     let mut c_as_scalar = C::F::ZERO;
@@ -242,9 +228,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     let d_p = &u_p / cg.p();
     let e_p = u_p.mod_floor(cg.p());
 
-    #[allow(non_snake_case)]
     let D1 = public_key.mul(&d_p);
-    #[allow(non_snake_case)]
     let D2 = cg.g().mul(&d_p);
 
     let l = Self::transcript_u_Ds_es(transcript, u_m, &D1, &D2, &e_p);
@@ -252,9 +236,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     let q_p = &u_p / &l;
     let r_p = u_p.mod_floor(&l);
 
-    #[allow(non_snake_case)]
     let Q1 = public_key.mul(&q_p);
-    #[allow(non_snake_case)]
     let Q2 = cg.g().mul(&q_p);
 
     (randomness, ciphertext, Self { S1, S2, S_caret, u_m, D1, D2, e_p, Q1, Q2, r_p })
@@ -288,12 +270,10 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
       u_m_uint += BigUint::from(u8::from(bit)) << i;
     }
     let fum = cg.f().mul(&u_m_uint);
-    #[allow(non_snake_case)]
     let S1C1c = self.S1.add(&ciphertext.1.mul(&c));
     if self.D1.mul(cg.p()).add(&public_key.mul(&self.e_p)).add(&fum) != S1C1c {
       Err(())?
     }
-    #[allow(non_snake_case)]
     let S2C2c = self.S2.add(&ciphertext.0.mul(&c));
     if self.D2.mul(cg.p()).add(&cg.g().mul(&self.e_p)) != S2C2c {
       Err(())?
@@ -315,7 +295,6 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
 }
 
 // https://eprint.iacr.org/2022/1437 5.2
-#[allow(non_snake_case)]
 pub struct ZkRelationProof<const N: usize, const M: usize> {
   Ts: [Element; N],
   us: [BigUint; M],
@@ -339,7 +318,6 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     }
   }
 
-  #[allow(non_snake_case)]
   fn transcript_Ts(transcript: &mut impl Transcript, Ts: &[Element]) -> BigUint {
     for T in Ts {
       T.transcript(b"Ts", transcript);
@@ -348,7 +326,6 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     BigUint::from_bytes_be(&transcript.challenge(b"c").as_ref()[.. 32])
   }
 
-  #[allow(non_snake_case)]
   pub fn prove(
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
@@ -380,7 +357,7 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     ZkRelationProof { Ts, us }
   }
 
-  #[allow(non_snake_case, clippy::result_unit_err)]
+  #[allow(clippy::result_unit_err)]
   pub fn verify(
     &self,
     cg: &ClassGroup,
