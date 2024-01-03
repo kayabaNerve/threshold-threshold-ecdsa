@@ -31,9 +31,13 @@ pub struct ZkDlogOutsideSubgroupProof {
 }
 
 impl ZkDlogOutsideSubgroupProof {
+  fn transcript_statement(transcript: &mut impl Transcript, element: &Element) {
+    transcript.domain_separate(b"ZkDlogOutsideSubgroupProof");
+    element.transcript(b"element", transcript);
+  }
+
   #[allow(non_snake_case)]
   fn transcript_R(cg: &ClassGroup, transcript: &mut impl Transcript, R: &Element) -> BigUint {
-    transcript.domain_separate(b"ZkDlogOutsideSubgroupProof");
     R.transcript(b"R", transcript);
     crate::sample_number_less_than(&mut ChaCha20Rng::from_seed(transcript.rng_seed(b"c")), cg.p())
   }
@@ -63,6 +67,8 @@ impl ZkDlogOutsideSubgroupProof {
     transcript: &mut impl Transcript,
     x: &BigUint,
   ) -> Self {
+    Self::transcript_statement(transcript, &cg.g().mul(x));
+
     // k is intended to be sampled from [-B, B]. We reduce the space by half yet don't sample from
     // -B as we can't calculate negatives over a field of unknown order (which has implications
     // later when s is calculated)
@@ -93,6 +99,8 @@ impl ZkDlogOutsideSubgroupProof {
     transcript: &mut impl Transcript,
     w: &Element,
   ) -> Result<(), ()> {
+    Self::transcript_statement(transcript, w);
+
     let c = Self::transcript_R(cg, transcript, &self.R);
     if self.e >= *cg.p() {
       Err(())?
@@ -131,6 +139,19 @@ pub struct ZkEncryptionProof<C: Ciphersuite> {
 }
 
 impl<C: Ciphersuite> ZkEncryptionProof<C> {
+  fn transcript_statement(
+    transcript: &mut impl Transcript,
+    public_key: &Element,
+    ciphertext: &Ciphertext,
+    point: C::G,
+  ) {
+    transcript.domain_separate(b"ZkEncryptionProof");
+    public_key.transcript(b"public_key", transcript);
+    ciphertext.0.transcript(b"ciphertext_randomness", transcript);
+    ciphertext.1.transcript(b"ciphertext_message", transcript);
+    transcript.append_message(b"point", point.to_bytes());
+  }
+
   #[allow(non_snake_case)]
   fn transcript_Ss(
     cg: &ClassGroup,
@@ -139,7 +160,6 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     S2: &Element,
     S_caret: C::G,
   ) -> BigUint {
-    transcript.domain_separate(b"ZkEncryptionProof");
     S1.transcript(b"S1", transcript);
     S2.transcript(b"S2", transcript);
     transcript.append_message(b"S_caret", S_caret.to_bytes());
@@ -186,6 +206,8 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
       scalar_uint += BigUint::from(u8::from(bit)) << i;
     }
     let ciphertext = cg.encrypt_with_randomness(public_key, &randomness, &scalar_uint);
+
+    Self::transcript_statement(transcript, public_key, &ciphertext, C::generator() * *scalar);
 
     #[allow(non_snake_case)]
     let B = cg.bound() << (128 + 128 + 2);
@@ -247,6 +269,8 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     ciphertext: &Ciphertext,
     point: C::G,
   ) -> Result<(), ()> {
+    Self::transcript_statement(transcript, public_key, ciphertext, point);
+
     let c = Self::transcript_Ss(cg, transcript, &self.S1, &self.S2, self.S_caret);
     let mut c_as_scalar = C::F::ZERO;
     for b in 0 .. c.bits() {
@@ -297,9 +321,26 @@ pub struct ZkRelationProof<const N: usize, const M: usize> {
   us: [BigUint; M],
 }
 impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
+  fn transcript_statement(
+    transcript: &mut impl Transcript,
+    Xs: &[[&Element; M]; N],
+    Ys: &[&Element; N],
+  ) {
+    transcript.domain_separate(b"ZkRelationProof");
+    transcript.append_message(b"n", u32::try_from(N).unwrap().to_le_bytes());
+    transcript.append_message(b"m", u32::try_from(M).unwrap().to_le_bytes());
+    for Xs in Xs {
+      for X in Xs {
+        X.transcript(b"X", transcript);
+      }
+    }
+    for Y in Ys {
+      Y.transcript(b"Y", transcript);
+    }
+  }
+
   #[allow(non_snake_case)]
   fn transcript_Ts(transcript: &mut impl Transcript, Ts: &[Element]) -> BigUint {
-    transcript.domain_separate(b"ZkRelationProof");
     for T in Ts {
       T.transcript(b"Ts", transcript);
     }
@@ -315,6 +356,14 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     Xs: [[&Element; M]; N],
     ws: [&BigUint; M],
   ) -> Self {
+    let mut Ys: [_; N] = core::array::from_fn(|_| cg.identity().clone());
+    for (i, Xs) in Xs.iter().enumerate() {
+      for (j, X) in Xs.iter().enumerate() {
+        Ys[i] = Ys[i].add(&X.mul(ws[j]));
+      }
+    }
+    Self::transcript_statement(transcript, &Xs, &core::array::from_fn(|i| &Ys[i]));
+
     let rs = core::array::from_fn::<_, M, _>(|_| cg.sample_secret(rng));
     let mut Ts = core::array::from_fn(|_| cg.identity().clone());
     for i in 0 .. N {
@@ -342,6 +391,8 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     Xs: [[&Element; M]; N],
     Ys: [&Element; N],
   ) -> Result<(), ()> {
+    Self::transcript_statement(transcript, &Xs, &Ys);
+
     for u in &self.us {
       if u > &((S * &(BigUint::one() << 256)) + cg.secret_bound()) {
         Err(())?
