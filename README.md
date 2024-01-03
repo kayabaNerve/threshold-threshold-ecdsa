@@ -92,9 +92,6 @@ group for the modulus, and accordingly does not face such difficulties.
 
 ### What needs to be done before anyone uses this?
 
-- The proof used to prove a ciphertext contains a discrete logarithm of a point
-  needs to be run in parallel (currently, it runs once achieving 2**40
-  security).
 - The protocol implemented needs to be formalized and have its security proven.
 - The protocol should be modified to achieve concurrent security.
 - The security parameters used (along with other constants) need review.
