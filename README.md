@@ -161,6 +161,11 @@ https://eprint.iacr.org/2022/1466, and doesn't have an optimal reduction
 algorithm (always using big integers and never native words for parts). Those
 should be implemented and would further reduce the time from the above ideal.
 
+`y_ciphertext` could theoretically be produced using a hash to ciphertext. This
+would require the participants know shares of `k`, the ECDSA private key, from
+the setup process yet would remove ~15-20% of the bandwidth/execution at time of
+sign.
+
 ### References
 
 - https://eprint.iacr.org/2015/047 defined a homomorphic encryption scheme from
