@@ -82,9 +82,8 @@ mod tests {
 
     use transcript::{Transcript, RecommendedTranscript};
 
-    use num_traits::{Zero, One, FromBytes};
+    use num_traits::{Zero, One, Signed, FromBytes};
     use num_integer::Integer;
-    use num_bigint::BigInt;
 
     use class_group::*;
     use proofs::*;
@@ -395,36 +394,82 @@ mod tests {
     // their signature shares
     let set = [1, 2, 3];
     let mut W_i_zs = vec![];
+    let mut R_i_zs = vec![];
     let mut W_i_ds = vec![];
+    let mut R_i_ds = vec![];
     let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
     let mut w = <Secp256k1 as Ciphersuite>::F::ZERO;
     for i in 2u16 ..= 3 {
-      let W_i_z = z_ciphertext.0.mul(&(&shares[&i] * &delta));
-      let W_i_d = d_ciphertext.0.mul(&(&shares[&i] * &delta));
+      // Calculate the literal shares
+      let share_to_use = &shares[&i] * &delta;
+      // Technically, the lagrange coefficient can be applied after collecting shares
+      // The intended decryptor must be known at this time so it's assumed the set is known at this
+      // time
+      let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
+      let share_to_use = share_to_use * lagrange.abs().to_biguint().unwrap();
 
-      let share_max_size =
-        BigUint::one() << (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits());
+      // If the lagrange (a publicly known coefficient) is negative, use the negative form of the
+      // ciphertext's randomness element
+      let z_ciphertext_neg = z_ciphertext.0.clone().neg();
+      let z_ciphertext_base =
+        if lagrange.is_positive() { &z_ciphertext.0 } else { &z_ciphertext_neg };
+      let W_i_z = z_ciphertext_base.mul(&share_to_use);
+      let d_ciphertext_neg = d_ciphertext.0.clone().neg();
+      let d_ciphertext_base =
+        if lagrange.is_positive() { &d_ciphertext.0 } else { &d_ciphertext_neg };
+      let W_i_d = d_ciphertext_base.mul(&share_to_use);
+
+      let share_max_size = BigUint::one() <<
+        (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits() + lagrange.bits());
+
+      // Blind the shares so that only the intended decryptor can access them
+      let r_i_z = crate::sample_number_less_than(&mut OsRng, &share_max_size);
+      let R_i_z = cg.g().mul(&r_i_z);
+      let W_i_z = W_i_z.add(&verification_shares[&1].mul(&r_i_z));
+      let r_i_d = crate::sample_number_less_than(&mut OsRng, &share_max_size);
+      let R_i_d = cg.g().mul(&r_i_d);
+      let W_i_d = W_i_d.add(&verification_shares[&1].mul(&r_i_d));
 
       // Prove the encryption shares are well-formed
+      #[rustfmt::skip]
       let proof = ZkRelationProof::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
-        [[cg.g()], [&z_ciphertext.0], [&d_ciphertext.0]],
-        [&(&shares[&i] * &delta)],
+        [
+          [cg.g(),            cg.identity(),            cg.identity()],
+          [cg.identity(),     cg.g(),                   cg.identity()],
+          [cg.identity(),     cg.identity(),            cg.g()],
+          [z_ciphertext_base, &verification_shares[&1], cg.identity()],
+          [d_ciphertext_base, cg.identity(),            &verification_shares[&1]],
+        ],
+        [&share_to_use, &r_i_z, &r_i_d],
       );
       println!(
         "Calculated and proved for decryption shares: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis()
       );
       segment_time = std::time::Instant::now();
+      #[rustfmt::skip]
       proof
         .verify(
           &cg,
           &mut transcript(),
           &share_max_size,
-          [[cg.g()], [&z_ciphertext.0], [&d_ciphertext.0]],
-          [&verification_shares[&i], &W_i_z, &W_i_d],
+          [
+            [cg.g(),            cg.identity(),            cg.identity()],
+            [cg.identity(),     cg.g(),                   cg.identity()],
+            [cg.identity(),     cg.identity(),            cg.g()],
+            [z_ciphertext_base, &verification_shares[&1], cg.identity()],
+            [d_ciphertext_base, cg.identity(),            &verification_shares[&1]],
+          ],
+          [
+            &verification_shares[&i].mul(&lagrange.abs().to_biguint().unwrap()),
+            &R_i_z,
+            &R_i_d,
+            &W_i_z,
+            &W_i_d,
+          ],
         )
         .unwrap();
       println!(
@@ -433,26 +478,10 @@ mod tests {
       );
       segment_time = std::time::Instant::now();
 
-      // Technically, the lagrange coefficient can be applied after collecting shares
-      // The provided lagrange function inlines the delta multiplication so it can return a single
-      // value, so to post-include the lagrange would be to include delta twice (as delta must be
-      // included here)
-      // While we could rewrite the lagrange function to return a (numerator, denominator), we
-      // don't need post-determinism of the lagrange coefficient
-      let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
-      let W_i_z = if lagrange < BigInt::zero() {
-        W_i_z.neg().mul(&(-lagrange.clone()).to_biguint().unwrap())
-      } else {
-        W_i_z.mul(&lagrange.clone().to_biguint().unwrap())
-      };
       W_i_zs.push(W_i_z);
-
-      let W_i_d = if lagrange < BigInt::zero() {
-        W_i_d.neg().mul(&(-lagrange).to_biguint().unwrap())
-      } else {
-        W_i_d.mul(&lagrange.to_biguint().unwrap())
-      };
+      R_i_zs.push(R_i_z);
       W_i_ds.push(W_i_d);
+      R_i_ds.push(R_i_d);
 
       // Technically, a post-round on invalid share could be used for identification
       // Pros: Doesn't require a more expensive proof in the optimistic path
@@ -478,14 +507,14 @@ mod tests {
     let mut W_z = z_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
     );
-    for W_i_z in W_i_zs {
-      W_z = W_z.add(&W_i_z);
+    for (W_i_z, R_i_z) in W_i_zs.into_iter().zip(R_i_zs.into_iter()) {
+      W_z = W_z.add(&W_i_z.add(&R_i_z.mul(&(&shares[&1] * &delta)).neg()));
     }
     let mut W_d = d_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
     );
-    for W_i_d in W_i_ds {
-      W_d = W_d.add(&W_i_d);
+    for (W_i_d, R_i_d) in W_i_ds.into_iter().zip(R_i_ds.into_iter()) {
+      W_d = W_d.add(&W_i_d.add(&R_i_d.mul(&(&shares[&1] * &delta)).neg()));
     }
 
     println!(
