@@ -394,7 +394,6 @@ mod tests {
     // their signature shares
     let set = [1, 2, 3];
     let mut W_i_zs = vec![];
-    let mut R_i_zs = vec![];
     let mut W_i_ds = vec![];
     let mut R_i_ds = vec![];
     let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
@@ -422,10 +421,7 @@ mod tests {
       let share_max_size = BigUint::one() <<
         (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits() + lagrange.bits());
 
-      // Blind the shares so that only the intended decryptor can access them
-      let r_i_z = crate::sample_number_less_than(&mut OsRng, &share_max_size);
-      let R_i_z = cg.g().mul(&r_i_z);
-      let W_i_z = W_i_z.add(&verification_shares[&1].mul(&r_i_z));
+      // Blind the d decryption shares so that only the intended decryptor can access them
       let r_i_d = crate::sample_number_less_than(&mut OsRng, &share_max_size);
       let R_i_d = cg.g().mul(&r_i_d);
       let W_i_d = W_i_d.add(&verification_shares[&1].mul(&r_i_d));
@@ -437,13 +433,12 @@ mod tests {
         &cg,
         &mut transcript(),
         [
-          [cg.g(),            cg.identity(),            cg.identity()],
-          [cg.identity(),     cg.g(),                   cg.identity()],
-          [cg.identity(),     cg.identity(),            cg.g()],
-          [z_ciphertext_base, &verification_shares[&1], cg.identity()],
-          [d_ciphertext_base, cg.identity(),            &verification_shares[&1]],
+          [cg.g(),            cg.identity()],
+          [cg.identity(),     cg.g()],
+          [z_ciphertext_base, cg.identity()],
+          [d_ciphertext_base, &verification_shares[&1]],
         ],
-        [&share_to_use, &r_i_z, &r_i_d],
+        [&share_to_use, &r_i_d],
       );
       println!(
         "Calculated and proved for decryption shares: {}",
@@ -457,15 +452,13 @@ mod tests {
           &mut transcript(),
           &share_max_size,
           [
-            [cg.g(),            cg.identity(),            cg.identity()],
-            [cg.identity(),     cg.g(),                   cg.identity()],
-            [cg.identity(),     cg.identity(),            cg.g()],
-            [z_ciphertext_base, &verification_shares[&1], cg.identity()],
-            [d_ciphertext_base, cg.identity(),            &verification_shares[&1]],
+            [cg.g(),            cg.identity()],
+            [cg.identity(),     cg.g()],
+            [z_ciphertext_base, cg.identity()],
+            [d_ciphertext_base, &verification_shares[&1]],
           ],
           [
             &verification_shares[&i].mul(&lagrange.abs().to_biguint().unwrap()),
-            &R_i_z,
             &R_i_d,
             &W_i_z,
             &W_i_d,
@@ -479,7 +472,6 @@ mod tests {
       segment_time = std::time::Instant::now();
 
       W_i_zs.push(W_i_z);
-      R_i_zs.push(R_i_z);
       W_i_ds.push(W_i_d);
       R_i_ds.push(R_i_d);
 
@@ -507,8 +499,8 @@ mod tests {
     let mut W_z = z_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
     );
-    for (W_i_z, R_i_z) in W_i_zs.into_iter().zip(R_i_zs.into_iter()) {
-      W_z = W_z.add(&W_i_z.add(&R_i_z.mul(&(&shares[&1] * &delta)).neg()));
+    for W_i_z in W_i_zs {
+      W_z = W_z.add(&W_i_z);
     }
     let mut W_d = d_ciphertext.0.mul(
       &(&shares[&1] * &delta * IntegerSecretSharing::lagrange(4, 1, &set).to_biguint().unwrap()),
