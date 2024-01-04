@@ -271,11 +271,11 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     }
     let fum = cg.f().mul(&u_m_uint);
     let S1C1c = self.S1.add(&ciphertext.1.mul(&c));
-    if self.D1.mul(cg.p()).add(&public_key.mul(&self.e_p)).add(&fum) != S1C1c {
+    if multiexp(&[cg.p(), &self.e_p], &[&self.D1, public_key]).add(&fum) != S1C1c {
       Err(())?
     }
     let S2C2c = self.S2.add(&ciphertext.0.mul(&c));
-    if self.D2.mul(cg.p()).add(&cg.g().mul(&self.e_p)) != S2C2c {
+    if multiexp(&[cg.p(), &self.e_p], &[&self.D2, cg.g()]) != S2C2c {
       Err(())?
     }
 
@@ -283,10 +283,10 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     if self.r_p >= l {
       Err(())?
     }
-    if self.Q1.mul(&l).add(&public_key.mul(&self.r_p)).add(&fum) != S1C1c {
+    if multiexp(&[&l, &self.r_p], &[&self.Q1, public_key]).add(&fum) != S1C1c {
       Err(())?;
     }
-    if self.Q2.mul(&l).add(&cg.g().mul(&self.r_p)) != S2C2c {
+    if multiexp(&[&l, &self.r_p], &[&self.Q2, cg.g()]) != S2C2c {
       Err(())?;
     }
 
@@ -379,11 +379,13 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     let c = Self::transcript_Ts(transcript, &self.Ts);
     for i in 0 .. N {
       let lhs = self.Ts[i].add(&Ys[i].mul(&c));
-      let mut rhs = cg.identity().clone();
+      let mut scalars = vec![];
+      let mut elements = vec![];
       for j in 0 .. M {
-        rhs = rhs.add(&Xs[i][j].mul(&self.us[j]));
+        scalars.push(&self.us[j]);
+        elements.push(Xs[i][j]);
       }
-      if lhs != rhs {
+      if lhs != multiexp(&scalars, &elements) {
         Err(())?
       }
     }

@@ -597,6 +597,7 @@ pub(crate) fn multiexp(scalars: &[&BigUint], elements: &[&Element]) -> Element {
     }
   }
 
+  // TODO: Return identity on None
   let mut res: Option<Element> = None;
 
   let mut scalar_bits = scalars.iter().map(|scalar| scalar.bits()).collect::<Vec<_>>();
@@ -612,6 +613,10 @@ pub(crate) fn multiexp(scalars: &[&BigUint], elements: &[&Element]) -> Element {
             *res = res.double();
           }
         }
+      }
+
+      if elements[i].is_identity() {
+        continue;
       }
 
       let full_bits = (b % 5) == 4;
