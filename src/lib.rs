@@ -153,10 +153,25 @@ mod tests {
 
     let mut segment_time = std::time::Instant::now();
 
+    let commitment =
+      |y_ciphertext: &Ciphertext, ky_ciphertext: &Ciphertext, xy_randomness: &Element| {
+        let mut transcript = transcript();
+        y_ciphertext.0.transcript(b"y_randomness", &mut transcript);
+        y_ciphertext.1.transcript(b"y_message", &mut transcript);
+        ky_ciphertext.0.transcript(b"ky_randomness", &mut transcript);
+        ky_ciphertext.1.transcript(b"ky_message", &mut transcript);
+        xy_randomness.transcript(b"xy_randomness", &mut transcript);
+        transcript.challenge(b"commitment")
+      };
+
     // Round 1: Publish additive shares of the nonce
     let mut x_is = vec![];
     let mut X_is = vec![];
     let mut x_i_ciphertexts = vec![];
+    let mut y_i_full = vec![];
+    let mut ky_i_full = vec![];
+    let mut xy_i_randomnesses = vec![];
+    let mut commitments = vec![];
     for _ in 0 .. 3 {
       let mut num_bytes = [0; 32];
       let x_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
@@ -186,6 +201,39 @@ mod tests {
       );
       segment_time = std::time::Instant::now();
       x_i_ciphertexts.push(ciphertext);
+
+      // The following are decided and committed to yet withheld
+      let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+      let y_i_uint = BigUint::from_bytes_be(y_i.to_repr().as_ref());
+
+      let (y_i_randomness, y_i_ciphertext) = cg.encrypt(&mut OsRng, &public_key, &y_i_uint);
+      println!(
+        "Encrypted Y_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis(),
+      );
+      segment_time = std::time::Instant::now();
+
+      let (ky_i_randomness, ky_i_ciphertext) =
+        cg.mul(&mut OsRng, &public_key, &k_ciphertext, &y_i_uint);
+      println!(
+        "Scaled k by y_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis(),
+      );
+      segment_time = std::time::Instant::now();
+
+      let xy_i_randomness = cg.sample_secret(&mut OsRng);
+
+      // Commit to the ciphertexts we can and the xy randomness (as we can't form the xy ciphertext
+      // yet)
+      // This prevents deciding randomness after seeing everyone else's and using Wagner's
+      // algorithm to efficiently calculate randomnesses which will cause unintended encryptions
+      let xy_i_commitment = cg.g().mul(&xy_i_randomness);
+      commitments
+        .push((commitment(&y_i_ciphertext, &ky_i_ciphertext, &xy_i_commitment), xy_i_commitment));
+
+      y_i_full.push((y_i_uint, y_i_randomness, y_i_ciphertext));
+      ky_i_full.push((ky_i_randomness, ky_i_ciphertext));
+      xy_i_randomnesses.push(xy_i_randomness);
     }
     let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
     let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
@@ -195,7 +243,6 @@ mod tests {
     for x_i_ciphertext in &x_i_ciphertexts {
       x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext);
     }
-
     println!(
       "Calculated X: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
@@ -203,36 +250,28 @@ mod tests {
     segment_time = std::time::Instant::now();
 
     // Round 2: Perform multiplication of the sum nonce by our shares of y
-    let mut y_is = vec![];
     let mut y_i_ciphertexts = vec![];
-    let mut xy_i_ciphertexts = vec![];
     let mut ky_i_ciphertexts = vec![];
-    for _ in 0 .. 3 {
-      // Decide y
-      let mut num_bytes = [0; 32];
-      let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-      num_bytes.copy_from_slice(y_i.to_repr().as_ref());
-      y_is.push(y_i);
+    let mut xy_i_ciphertexts = vec![];
+    for i in 0 .. 3 {
+      let (y_i_uint, y_i_randomness, y_i_ciphertext) = y_i_full[i].clone();
+      let (ky_i_randomness, ky_i_ciphertext) = ky_i_full[i].clone();
+      let xy_i_randomness = xy_i_randomnesses[i].clone();
 
-      let y_i_uint = BigUint::from_bytes_be(&num_bytes);
-      let (y_randomness, y_i_ciphertext) = cg.encrypt(&mut OsRng, &public_key, &y_i_uint);
+      let mut xy_i_ciphertext = x_ciphertext.mul_without_randomness(&y_i_uint);
+      xy_i_ciphertext.0 = xy_i_ciphertext.0.add(&cg.g().mul(&xy_i_randomness));
+      xy_i_ciphertext.1 = xy_i_ciphertext.1.add(&public_key.mul(&xy_i_randomness));
       println!(
-        "Encrypted Y_i: {}",
-        std::time::Instant::now().duration_since(segment_time).as_millis()
-      );
-      segment_time = std::time::Instant::now();
-
-      // Create xy_i_ciphertext and ky_i_ciphertext
-      let (xy_randomness, xy_i_ciphertext) =
-        cg.mul(&mut OsRng, &public_key, &x_ciphertext, &y_i_uint);
-      let (ky_randomness, ky_i_ciphertext) =
-        cg.mul(&mut OsRng, &public_key, &k_ciphertext, &y_i_uint);
-
-      println!(
-        "Created xy_i ky_i ciphertexts: {}",
+        "Created xy_i ciphertexts: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
       );
       segment_time = std::time::Instant::now();
+
+      // Verify the hashed commitment
+      assert_eq!(
+        commitments[i].0,
+        commitment(&y_i_ciphertext, &ky_i_ciphertext, &commitments[i].1,)
+      );
 
       // For 2022-1437 5.2, a scaled ciphertext proof can be created with:
       // m=2, ws [a, y]
@@ -263,6 +302,8 @@ mod tests {
       //   [Identity, Identity, G,        k_ciphertext.0],
       //   [Identity, Identity, K,        k_ciphertext.1],
       // ]
+      //
+      // Finally, for concurrent security, add an additional row for the xy randomness commitment
       #[rustfmt::skip]
       let proof = ZkRelationProof::prove(
         &mut OsRng,
@@ -271,12 +312,13 @@ mod tests {
         [
           [cg.g(),        cg.identity(), cg.identity(), cg.identity()],
           [&public_key,   cg.identity(), cg.identity(), cg.f()],
+          [cg.identity(), cg.g(),        cg.identity(), cg.identity()],
           [cg.identity(), cg.g(),        cg.identity(), &x_ciphertext.0],
           [cg.identity(), &public_key,   cg.identity(), &x_ciphertext.1],
           [cg.identity(), cg.identity(), cg.g(),        &k_ciphertext.0],
           [cg.identity(), cg.identity(), &public_key,   &k_ciphertext.1],
         ],
-        [&y_randomness, &xy_randomness, &ky_randomness, &y_i_uint],
+        [&y_i_randomness, &xy_i_randomness, &ky_i_randomness, &y_i_uint],
       );
       println!(
         "Proved for y_i xy_i ky_i ciphertexts: {}",
@@ -293,6 +335,7 @@ mod tests {
           [
             [cg.g(),        cg.identity(), cg.identity(), cg.identity()],
             [&public_key,   cg.identity(), cg.identity(), cg.f()],
+            [cg.identity(), cg.g(),        cg.identity(), cg.identity()],
             [cg.identity(), cg.g(),        cg.identity(), &x_ciphertext.0],
             [cg.identity(), &public_key,   cg.identity(), &x_ciphertext.1],
             [cg.identity(), cg.identity(), cg.g(),        &k_ciphertext.0],
@@ -300,7 +343,7 @@ mod tests {
           ],
           [
             &y_i_ciphertext.0,  &y_i_ciphertext.1,
-            &xy_i_ciphertext.0, &xy_i_ciphertext.1,
+            &commitments[i].1, &xy_i_ciphertext.0, &xy_i_ciphertext.1,
             &ky_i_ciphertext.0, &ky_i_ciphertext.1,
           ],
         )
@@ -353,6 +396,17 @@ mod tests {
     let my_ciphertext =
       y_ciphertext.mul_without_randomness(&BigUint::from_bytes_be(m1_hash.to_repr().as_ref()));
 
+    // dr_ciphertext is composed of d_ciphertext is ky ciphertexts
+    // ky was commited to in round 1 and not revealed until round 2
+    // r is static to the X ciphertexts from round 1
+    // Accordingly, dr_ciphertext is safe to decrypt re: Wagner's
+    //
+    // The y ciphertext was committed to, yet `m` was only just decided and could be maliciously
+    // In order to achieve concurrent security, one of three things is needed:
+    // 1) An extra round to introduce new randomness
+    // 2) The message has to be set at the start so it can't be post-decided
+    // 3) Potentially, a binomial nonce scheme could be used
+    // TODO
     let w_ciphertext = my_ciphertext.add_without_randomness(&dr_ciphertext);
     println!(
       "w ciphertext calculation: {}",
