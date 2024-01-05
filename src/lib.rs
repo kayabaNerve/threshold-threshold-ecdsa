@@ -263,6 +263,8 @@ mod tests {
       segment_time = std::time::Instant::now();
     }
 
+    // Round 2
+
     {
       let mut verifier = BatchVerifier::new();
       for (i, proof) in r1_proofs.iter().enumerate() {
@@ -301,7 +303,7 @@ mod tests {
     );
     segment_time = std::time::Instant::now();
 
-    // Round 2: Perform multiplication of the sum nonce by our shares of y
+    // Perform multiplication of the sum nonce by our shares of y
 
     // For 2022-1437 5.2:
     // a = y randomness
@@ -382,6 +384,10 @@ mod tests {
       segment_time = std::time::Instant::now();
     }
 
+    // Round 3
+    // Technically, any threshold can perform this round, even if distinct from the prior used set
+    let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
+
     {
       let mut verifier = BatchVerifier::new();
       for (i, proof) in r2_proofs.iter().enumerate() {
@@ -445,10 +451,6 @@ mod tests {
       std::time::Instant::now().duration_since(segment_time).as_millis()
     );
     segment_time = std::time::Instant::now();
-
-    // Round 3
-    // Technically, any threshold can perform this round, even if distinct from the prior used set
-    let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
 
     // Multiply y by H(m)
     let my_ciphertext = y_ciphertext.mul_without_randomness(
@@ -515,6 +517,8 @@ mod tests {
       );
       segment_time = std::time::Instant::now();
     }
+
+    // Completion
 
     {
       let w_ciphertext_neg = w_ciphertext.0.clone().neg();
