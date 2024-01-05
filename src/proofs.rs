@@ -87,9 +87,10 @@ impl ZkDlogOutsideSubgroupProof {
   }
 
   #[allow(clippy::result_unit_err)]
-  pub fn verify(
-    &self,
-    cg: &ClassGroup,
+  pub fn verify<'a>(
+    &'a self,
+    cg: &'a ClassGroup,
+    batch_verifier: &mut BatchVerifier<'a>,
     transcript: &mut impl Transcript,
     w: &Element,
   ) -> Result<(), ()> {
@@ -99,17 +100,21 @@ impl ZkDlogOutsideSubgroupProof {
     if self.e >= *cg.p() {
       Err(())?
     }
-    let Rwc = self.R.add(&w.mul(&c));
-    if multiexp(&[cg.p(), &self.e], &[&self.D, cg.g()]) != Rwc {
-      Err(())?
-    }
+
+    batch_verifier.queue(
+      [(cg.p(), &self.D)],
+      [(&BigUint::one(), self.R.clone().neg()), (&c, w.clone().neg())],
+      [(&self.e, cg.g_table())],
+    );
     let l = Self::transcript_De(transcript, &self.D, &self.e);
     if self.r >= l {
       Err(())?
     }
-    if multiexp(&[&l, &self.r], &[&self.Q, cg.g()]) != Rwc {
-      Err(())?
-    }
+    batch_verifier.queue(
+      [(&l, &self.Q)],
+      [(&BigUint::one(), self.R.clone().neg()), (&c, w.clone().neg())],
+      [(&self.r, cg.g_table())],
+    );
     Ok(())
   }
 }
@@ -243,15 +248,16 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
   }
 
   #[allow(clippy::result_unit_err)]
-  pub fn verify(
-    &self,
-    cg: &ClassGroup,
+  pub fn verify<'a>(
+    &'a self,
+    cg: &'a ClassGroup,
+    verifier: &mut BatchVerifier<'a>,
     transcript: &mut impl Transcript,
-    public_key: &Element,
-    ciphertext: &Ciphertext,
+    public_key_table: &'a [Element; 31],
+    ciphertext: &'a Ciphertext,
     point: C::G,
   ) -> Result<(), ()> {
-    Self::transcript_statement(transcript, public_key, ciphertext, point);
+    Self::transcript_statement(transcript, &public_key_table[0], ciphertext, point);
 
     let c = Self::transcript_Ss(cg, transcript, &self.S1, &self.S2, self.S_caret);
     let mut c_as_scalar = C::F::ZERO;
@@ -269,28 +275,51 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     for (i, bit) in self.u_m.to_le_bits().into_iter().enumerate() {
       u_m_uint += BigUint::from(u8::from(bit)) << i;
     }
-    let fum = cg.f().mul(&u_m_uint);
-    let S1C1c = self.S1.add(&ciphertext.1.mul(&c));
-    if multiexp(&[cg.p(), &self.e_p], &[&self.D1, public_key]).add(&fum) != S1C1c {
-      Err(())?
-    }
-    let S2C2c = self.S2.add(&ciphertext.0.mul(&c));
-    if multiexp(&[cg.p(), &self.e_p], &[&self.D2, cg.g()]) != S2C2c {
-      Err(())?
-    }
+
+    verifier.queue(
+      [(cg.p(), &self.D1)],
+      [(&BigUint::one(), self.S1.clone().neg()), (&c, ciphertext.1.clone().neg())],
+      [(&self.e_p, public_key_table), (&u_m_uint, cg.f_table())],
+    );
+    verifier.queue(
+      [(cg.p(), &self.D2)],
+      [(&BigUint::one(), self.S2.clone().neg()), (&c, ciphertext.0.clone().neg())],
+      [(&self.e_p, cg.g_table())],
+    );
 
     let l = Self::transcript_u_Ds_es(transcript, self.u_m, &self.D1, &self.D2, &self.e_p);
     if self.r_p >= l {
       Err(())?
     }
-    if multiexp(&[&l, &self.r_p], &[&self.Q1, public_key]).add(&fum) != S1C1c {
-      Err(())?;
-    }
-    if multiexp(&[&l, &self.r_p], &[&self.Q2, cg.g()]) != S2C2c {
-      Err(())?;
-    }
+
+    verifier.queue(
+      [(&l, &self.Q1)],
+      [(&BigUint::one(), self.S1.clone().neg()), (&c, ciphertext.1.clone().neg())],
+      [(&self.r_p, public_key_table), (&u_m_uint, cg.f_table())],
+    );
+    verifier.queue(
+      [(&l, &self.Q2)],
+      [(&BigUint::one(), self.S2.clone().neg()), (&c, ciphertext.0.clone().neg())],
+      [(&self.r_p, cg.g_table())],
+    );
 
     Ok(())
+  }
+}
+
+#[derive(Clone, Copy)]
+pub enum ElementOrTable<'a> {
+  Element(&'a Element),
+  Table(&'a [Element; 31]),
+}
+impl<'a> From<&'a Element> for ElementOrTable<'a> {
+  fn from(element: &'a Element) -> Self {
+    ElementOrTable::Element(element)
+  }
+}
+impl<'a> From<&'a [Element; 31]> for ElementOrTable<'a> {
+  fn from(table: &'a [Element; 31]) -> Self {
+    ElementOrTable::Table(table)
   }
 }
 
@@ -302,7 +331,7 @@ pub struct ZkRelationProof<const N: usize, const M: usize> {
 impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
   fn transcript_statement(
     transcript: &mut impl Transcript,
-    Xs: &[[&Element; M]; N],
+    Xs: &[[ElementOrTable<'_>; M]; N],
     Ys: &[&Element; N],
   ) {
     transcript.domain_separate(b"ZkRelationProof");
@@ -310,6 +339,10 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     transcript.append_message(b"m", u32::try_from(M).unwrap().to_le_bytes());
     for Xs in Xs {
       for X in Xs {
+        let X = match X {
+          ElementOrTable::Element(X) => X,
+          ElementOrTable::Table(X) => &X[0],
+        };
         X.transcript(b"X", transcript);
       }
     }
@@ -330,12 +363,16 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
-    Xs: [[&Element; M]; N],
+    Xs: [[ElementOrTable<'_>; M]; N],
     ws: [&BigUint; M],
   ) -> Self {
     let mut Ys: [_; N] = core::array::from_fn(|_| cg.identity().clone());
     for (i, Xs) in Xs.iter().enumerate() {
       for (j, X) in Xs.iter().enumerate() {
+        let X = match X {
+          ElementOrTable::Element(X) => X,
+          ElementOrTable::Table(X) => &X[0],
+        };
         Ys[i] = Ys[i].add(&X.mul(ws[j]));
       }
     }
@@ -346,7 +383,11 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     for i in 0 .. N {
       #[allow(clippy::needless_range_loop)]
       for j in 0 .. M {
-        Ts[i] = Ts[i].add(&Xs[i][j].mul(&rs[j]));
+        let X = match Xs[i][j] {
+          ElementOrTable::Element(X) => X,
+          ElementOrTable::Table(X) => &X[0],
+        };
+        Ts[i] = Ts[i].add(&X.mul(&rs[j]));
       }
     }
     let c = Self::transcript_Ts(transcript, &Ts);
@@ -358,15 +399,16 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
   }
 
   #[allow(clippy::result_unit_err)]
-  pub fn verify(
-    &self,
-    cg: &ClassGroup,
+  pub fn verify<'a>(
+    &'a self,
+    cg: &'a ClassGroup,
+    verifier: &mut BatchVerifier<'a>,
     transcript: &mut impl Transcript,
     // Limit for the discrete logarithms
     // TODO: Should this be individualized?
     S: &BigUint,
-    Xs: [[&Element; M]; N],
-    Ys: [&Element; N],
+    Xs: [[ElementOrTable<'a>; M]; N],
+    Ys: [&'a Element; N],
   ) -> Result<(), ()> {
     Self::transcript_statement(transcript, &Xs, &Ys);
 
@@ -378,16 +420,19 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
 
     let c = Self::transcript_Ts(transcript, &self.Ts);
     for i in 0 .. N {
-      let lhs = self.Ts[i].add(&Ys[i].mul(&c));
-      let mut scalars = vec![];
-      let mut elements = vec![];
+      let mut pairs = vec![];
+      let mut tabled_pairs = vec![];
       for j in 0 .. M {
-        scalars.push(&self.us[j]);
-        elements.push(Xs[i][j]);
+        match Xs[i][j] {
+          ElementOrTable::Element(X) => pairs.push((&self.us[j], X)),
+          ElementOrTable::Table(X) => tabled_pairs.push((&self.us[j], X)),
+        }
       }
-      if lhs != multiexp(&scalars, &elements) {
-        Err(())?
-      }
+      verifier.queue(
+        pairs,
+        [(&BigUint::one(), self.Ts[i].clone().neg()), (&c, Ys[i].clone().neg())],
+        tabled_pairs,
+      );
     }
     Ok(())
   }
@@ -412,9 +457,10 @@ fn dlog_without_subgroup() {
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let (private_key, public_key) = cg.key_gen(&mut OsRng);
   let transcript = || RecommendedTranscript::new(b"DLog Outside Subgroup Proof Test");
-  ZkDlogOutsideSubgroupProof::prove(&mut OsRng, &cg, &mut transcript(), &private_key)
-    .verify(&cg, &mut transcript(), &public_key)
-    .unwrap();
+  let mut verifier = BatchVerifier::new();
+  let proof = ZkDlogOutsideSubgroupProof::prove(&mut OsRng, &cg, &mut transcript(), &private_key);
+  proof.verify(&cg, &mut verifier, &mut transcript(), &public_key).unwrap();
+  assert!(verifier.verify());
 }
 
 #[test]
@@ -435,14 +481,26 @@ fn encryption() {
 
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let (private_key, public_key) = cg.key_gen(&mut OsRng);
+  let public_key_table = public_key.table();
 
   let transcript = || RecommendedTranscript::new(b"Encryption Proof Test");
 
   let m = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
   let (_randomness, ciphertext, proof) =
     ZkEncryptionProof::<Secp256k1>::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &m);
+
+  let mut verifier = BatchVerifier::new();
   proof
-    .verify(&cg, &mut transcript(), &public_key, &ciphertext, Secp256k1::generator() * m)
+    .verify(
+      &cg,
+      &mut verifier,
+      &mut transcript(),
+      &public_key_table,
+      &ciphertext,
+      Secp256k1::generator() * m,
+    )
     .unwrap();
+  assert!(verifier.verify());
+
   assert_eq!(cg.decrypt(&private_key, &ciphertext).unwrap(), BigUint::from_be_bytes(&m.to_repr()));
 }

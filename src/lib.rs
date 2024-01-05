@@ -143,6 +143,7 @@ mod tests {
     }
     let delta = delta.unwrap();
     let public_key = public_key.unwrap();
+    let public_key_table = public_key.table();
 
     // TODO: Replace with a proven, decentralized flow
     let ec_key = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
@@ -172,6 +173,7 @@ mod tests {
     let mut ky_i_full = vec![];
     let mut xy_i_randomnesses = vec![];
     let mut commitments = vec![];
+    let mut r1_proofs = vec![];
     for _ in 0 .. 3 {
       let mut num_bytes = [0; 32];
       let x_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
@@ -192,14 +194,7 @@ mod tests {
         std::time::Instant::now().duration_since(segment_time).as_millis()
       );
       segment_time = std::time::Instant::now();
-      proof
-        .verify(&cg, &mut transcript(), &public_key, &ciphertext, *X_is.last().unwrap())
-        .unwrap();
-      println!(
-        "Verified X_i: {}",
-        std::time::Instant::now().duration_since(segment_time).as_millis()
-      );
-      segment_time = std::time::Instant::now();
+      r1_proofs.push(proof);
       x_i_ciphertexts.push(ciphertext);
 
       // The following are decided and committed to yet withheld
@@ -234,7 +229,36 @@ mod tests {
       y_i_full.push((y_i_uint, y_i_randomness, y_i_ciphertext));
       ky_i_full.push((ky_i_randomness, ky_i_ciphertext));
       xy_i_randomnesses.push(xy_i_randomness);
+
+      println!(
+        "Committed to further randomness: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
     }
+
+    {
+      let mut verifier = BatchVerifier::new();
+      for (i, proof) in r1_proofs.iter().enumerate() {
+        proof
+          .verify(
+            &cg,
+            &mut verifier,
+            &mut transcript(),
+            &public_key_table,
+            &x_i_ciphertexts[i],
+            X_is[i],
+          )
+          .unwrap();
+      }
+      assert!(verifier.verify());
+      println!(
+        "Verified X_is: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
+    }
+
     let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
     let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
 
@@ -250,9 +274,28 @@ mod tests {
     segment_time = std::time::Instant::now();
 
     // Round 2: Perform multiplication of the sum nonce by our shares of y
+    #[rustfmt::skip]
+    let relations = [
+      [cg.g_table().into(),        cg.identity().into(),       cg.identity().into(),        cg.identity().into()],
+      [(&public_key_table).into(), cg.identity().into(),       cg.identity().into(),        cg.f_table().into()],
+
+      // TODO: Does this break the ZK properties? You can subtract the commitment to the
+      // xy_i_randomness (since it uses an existing generator) and have just the scaled x
+      // randomness
+      // While it *shouldn't* be feasible to calculate the DLog for that, it's at least
+      // suboptimal?
+      [cg.identity().into(),       cg.g_table().into(),        cg.identity().into(),       cg.identity().into()],
+      [cg.identity().into(),       cg.g_table().into(),        cg.identity().into(),       (&x_ciphertext.0).into()],
+      [cg.identity().into(),       (&public_key_table).into(), cg.identity().into(),       (&x_ciphertext.1).into()],
+
+      [cg.identity().into(),       cg.identity().into(),       cg.g_table().into(),        (&k_ciphertext.0).into()],
+      [cg.identity().into(),       cg.identity().into(),       (&public_key_table).into(), (&k_ciphertext.1).into()],
+    ];
+
     let mut y_i_ciphertexts = vec![];
     let mut ky_i_ciphertexts = vec![];
     let mut xy_i_ciphertexts = vec![];
+    let mut r2_proofs = vec![];
     for i in 0 .. 3 {
       let (y_i_uint, y_i_randomness, y_i_ciphertext) = y_i_full[i].clone();
       let (ky_i_randomness, ky_i_ciphertext) = ky_i_full[i].clone();
@@ -309,54 +352,52 @@ mod tests {
         &mut OsRng,
         &cg,
         &mut transcript(),
-        [
-          [cg.g(),        cg.identity(), cg.identity(), cg.identity()],
-          [&public_key,   cg.identity(), cg.identity(), cg.f()],
-          [cg.identity(), cg.g(),        cg.identity(), cg.identity()],
-          [cg.identity(), cg.g(),        cg.identity(), &x_ciphertext.0],
-          [cg.identity(), &public_key,   cg.identity(), &x_ciphertext.1],
-          [cg.identity(), cg.identity(), cg.g(),        &k_ciphertext.0],
-          [cg.identity(), cg.identity(), &public_key,   &k_ciphertext.1],
-        ],
+        relations,
         [&y_i_randomness, &xy_i_randomness, &ky_i_randomness, &y_i_uint],
       );
+      r2_proofs.push(proof);
+      y_i_ciphertexts.push(y_i_ciphertext);
+      xy_i_ciphertexts.push(xy_i_ciphertext);
+      ky_i_ciphertexts.push(ky_i_ciphertext);
       println!(
         "Proved for y_i xy_i ky_i ciphertexts: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
       );
       segment_time = std::time::Instant::now();
-      #[rustfmt::skip]
-      proof
-        .verify(
-          &cg,
-          &mut transcript(),
-          // Assumes the ZkEncryptionProof randomness bound is <= this
-          &cg.secret_bound(),
-          [
-            [cg.g(),        cg.identity(), cg.identity(), cg.identity()],
-            [&public_key,   cg.identity(), cg.identity(), cg.f()],
-            [cg.identity(), cg.g(),        cg.identity(), cg.identity()],
-            [cg.identity(), cg.g(),        cg.identity(), &x_ciphertext.0],
-            [cg.identity(), &public_key,   cg.identity(), &x_ciphertext.1],
-            [cg.identity(), cg.identity(), cg.g(),        &k_ciphertext.0],
-            [cg.identity(), cg.identity(), &public_key,   &k_ciphertext.1],
-          ],
-          [
-            &y_i_ciphertext.0,  &y_i_ciphertext.1,
-            &commitments[i].1, &xy_i_ciphertext.0, &xy_i_ciphertext.1,
-            &ky_i_ciphertext.0, &ky_i_ciphertext.1,
-          ],
-        )
-        .unwrap();
+    }
+
+    {
+      let mut verifier = BatchVerifier::new();
+      for (i, proof) in r2_proofs.iter().enumerate() {
+        #[rustfmt::skip]
+        proof
+          .verify(
+            &cg,
+            &mut verifier,
+            &mut transcript(),
+            // Assumes the ZkEncryptionProof randomness bound is <= this
+            &cg.secret_bound(),
+            relations,
+            [
+              &y_i_ciphertexts[i].0,
+              &y_i_ciphertexts[i].1,
+
+              &commitments[i].1,
+              &xy_i_ciphertexts[i].0,
+              &xy_i_ciphertexts[i].1,
+
+              &ky_i_ciphertexts[i].0,
+              &ky_i_ciphertexts[i].1,
+            ],
+          )
+          .unwrap();
+      }
+      assert!(verifier.verify());
       println!(
         "Verified y_i xy_i ky_i ciphertexts: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
       );
       segment_time = std::time::Instant::now();
-
-      y_i_ciphertexts.push(y_i_ciphertext);
-      xy_i_ciphertexts.push(xy_i_ciphertext);
-      ky_i_ciphertexts.push(ky_i_ciphertext);
     }
 
     // Everyone now calculates y, z, and d
@@ -419,6 +460,7 @@ mod tests {
     let set = [1, 2, 3];
     let mut W_is = vec![];
     let mut Z_is = vec![];
+    let mut r3_proofs = vec![];
     for i in 1u16 ..= 3 {
       // Calculate the literal shares
       let share_to_use = &shares[&i] * &delta;
@@ -438,42 +480,67 @@ mod tests {
         if lagrange.is_positive() { &z_ciphertext.0 } else { &z_ciphertext_neg };
       let Z_i = z_ciphertext_base.mul(&share_to_use);
 
-      let share_max_size = BigUint::one() <<
-        (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits() + lagrange.bits());
-
       // Prove the encryption shares are well-formed
       let proof = ZkRelationProof::prove(
         &mut OsRng,
         &cg,
         &mut transcript(),
-        [[cg.g()], [w_ciphertext_base], [z_ciphertext_base]],
+        [[cg.g_table().into()], [w_ciphertext_base.into()], [z_ciphertext_base.into()]],
         [&share_to_use],
       );
+      r3_proofs.push(proof);
+      W_is.push(W_i);
+      Z_is.push(Z_i);
       println!(
         "Calculated and proved for decryption shares: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis()
       );
       segment_time = std::time::Instant::now();
+    }
 
-      // Verification of these can be delayed and only performed if an invalid signature is
-      // produced
-      proof
-        .verify(
-          &cg,
-          &mut transcript(),
-          &share_max_size,
-          [[cg.g()], [w_ciphertext_base], [z_ciphertext_base]],
-          [&verification_shares[&i].mul(&lagrange.abs().to_biguint().unwrap()), &W_i, &Z_i],
-        )
-        .unwrap();
+    {
+      let w_ciphertext_neg = w_ciphertext.0.clone().neg();
+      let z_ciphertext_neg = z_ciphertext.0.clone().neg();
+
+      let mut lagranges = vec![];
+      let mut lagranged_shares = vec![];
+      for i in 0 .. r3_proofs.len() {
+        let i_u16 = u16::try_from(i + 1).unwrap();
+        let lagrange = IntegerSecretSharing::lagrange(4, i_u16, &set);
+        lagranged_shares
+          .push(verification_shares[&i_u16].mul(&lagrange.abs().to_biguint().unwrap()));
+        lagranges.push(lagrange);
+      }
+      let mut verifier = BatchVerifier::new();
+      for (i, proof) in r3_proofs.iter().enumerate() {
+        let lagrange = &lagranges[i];
+        let share_max_size = BigUint::one() <<
+          (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits() + lagrange.bits());
+
+        let w_ciphertext_base =
+          if lagrange.is_positive() { &w_ciphertext.0 } else { &w_ciphertext_neg };
+        let z_ciphertext_base =
+          if lagrange.is_positive() { &z_ciphertext.0 } else { &z_ciphertext_neg };
+
+        // Verification of these can be delayed and only performed if an invalid signature is
+        // produced
+        proof
+          .verify(
+            &cg,
+            &mut verifier,
+            &mut transcript(),
+            &share_max_size,
+            [[cg.g_table().into()], [w_ciphertext_base.into()], [z_ciphertext_base.into()]],
+            [&lagranged_shares[i], &W_is[i], &Z_is[i]],
+          )
+          .unwrap();
+      }
+      assert!(verifier.verify());
       println!(
-        "Verified decryption shares: {}",
+        "Verified decryption shares (only necessary if signature creation fails): {}",
         std::time::Instant::now().duration_since(segment_time).as_millis()
       );
       segment_time = std::time::Instant::now();
-
-      W_is.push(W_i);
-      Z_is.push(Z_i);
     }
 
     // Sum the decryption shares

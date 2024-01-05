@@ -118,8 +118,6 @@ of `d`. Now, all of `w` is simply calculated in-ciphertext.
   attacks.
 - Secret variables need to be zeroized post-use.
 - The multiexp function should have much more liberal usage.
-- A batch verifier should be implemented.
-- Every public key and generator should be tabled.
 - rayon should be used for internal parallelism.
 
 ### Will you do this?

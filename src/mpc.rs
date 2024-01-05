@@ -26,8 +26,13 @@ impl CommitmentWithProof {
     Self { commitment, proof }
   }
   #[allow(clippy::result_unit_err)]
-  pub fn verify(&self, cg: &ClassGroup, transcript: &mut impl Transcript) -> Result<(), ()> {
-    self.proof.verify(cg, transcript, &self.commitment)
+  pub fn verify<'a>(
+    &'a self,
+    cg: &'a ClassGroup,
+    verifier: &mut BatchVerifier<'a>,
+    transcript: &mut impl Transcript,
+  ) -> Result<(), ()> {
+    self.proof.verify(cg, verifier, transcript, &self.commitment)
   }
 }
 
