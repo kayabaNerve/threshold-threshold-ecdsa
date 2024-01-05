@@ -14,9 +14,7 @@ ciphersuite = { git = "https://github.com/serai-dex/serai", features = ["std", "
 elliptic-curve = "0.13"
 ecdsa = { version = "0.16", features = ["verifying", "hazmat"] }
 
-num-traits = "0.2"
-num-integer = "0.1"
-num-bigint = "0.4"
+malachite = "0.4"
 
 crypto-bigint = { version = "0.5", features = ["extra-sizes"] }
 crypto-primes = "0.5"
@@ -24,15 +22,8 @@ crypto-primes = "0.5"
 [dev-dependencies]
 transcript = { package = "flexible-transcript", git = "https://github.com/serai-dex/serai", features = ["recommended"] }
 
-[patch.crates-io]
-# https://github.com/rust-lang-nursery/lazy-static.rs/issues/201
-# lazy_static = { git = "https://github.com/rust-lang-nursery/lazy-static.rs", rev = "5735630d46572f1e5377c8f2ba0f79d18f53b10c" }
-
 [profile.dev.package]
-generic-array = { opt-level = 3 }
-crypto-common = { opt-level = 3 }
-crypto-bigint = { opt-level = 3 }
-crypto-primes = { opt-level = 3 }
-num-traits = { opt-level = 3 }
-num-integer = { opt-level = 3 }
-num-bigint = { opt-level = 3 }
+malachite-base = { opt-level = 3 }
+malachite-nz = { opt-level = 3 }
+malachite-q = { opt-level = 3 }
+malachite = { opt-level = 3 }

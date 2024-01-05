@@ -117,8 +117,8 @@ of `d`. Now, all of `w` is simply calculated in-ciphertext.
 - Secret-involving math operations need to be masked to prevent side-channel
   attacks.
 - Secret variables need to be zeroized post-use.
-- The multiexp function should have much more liberal usage.
 - rayon should be used for internal parallelism.
+- gmp should be moved to.
 
 ### Will you do this?
 

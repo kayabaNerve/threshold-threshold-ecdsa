@@ -2,7 +2,10 @@
 
 use rand_core::{RngCore, CryptoRng};
 
-use num_bigint::BigUint;
+use malachite::{
+  num::{logic::traits::*, conversion::traits::*},
+  *,
+};
 
 use ciphersuite::{
   group::{ff::PrimeField, Group},
@@ -14,11 +17,11 @@ pub mod class_group;
 pub mod proofs;
 pub mod mpc;
 
-pub fn sample_number_less_than(rng: &mut (impl RngCore + CryptoRng), bound: &BigUint) -> BigUint {
+pub fn sample_number_less_than(rng: &mut (impl RngCore + CryptoRng), bound: &Natural) -> Natural {
   loop {
-    let mut bytes = vec![0; bound.bits().div_ceil(8).try_into().unwrap()];
+    let mut bytes = vec![0; bound.significant_bits().div_ceil(8).try_into().unwrap()];
     rng.fill_bytes(&mut bytes);
-    let x = BigUint::from_bytes_be(&bytes);
+    let x = Natural::from_digits_desc(&256, bytes.into_iter().map(u16::from)).unwrap();
     if x >= *bound {
       continue;
     }
@@ -52,9 +55,13 @@ pub fn verify(
 
 #[cfg(test)]
 mod tests {
+  use core::cmp::Ordering;
+
   use rand_core::OsRng;
+
   use crypto_bigint::*;
   use ciphersuite::group::ff::Field;
+
   use super::*;
 
   #[test]
@@ -82,25 +89,27 @@ mod tests {
 
     use transcript::{Transcript, RecommendedTranscript};
 
-    use num_traits::{Zero, One, Signed, FromBytes};
-    use num_integer::Integer;
+    use malachite::num::{basic::traits::*, arithmetic::traits::*};
 
     use class_group::*;
     use proofs::*;
     use mpc::*;
+
+    use super::*;
 
     const LIMBS: usize = 256 / 64;
     let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
     let mut secp256k1_mod = [0; LIMBS * 8];
     secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
     secp256k1_mod[(LIMBS * 8) - 1] += 1;
-    let secp256k1_mod = BigUint::from_be_bytes(&secp256k1_mod);
+    let secp256k1_mod =
+      Natural::from_digits_desc(&256, secp256k1_mod.into_iter().map(u16::from)).unwrap();
 
     let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
     let transcript = || RecommendedTranscript::new(b"Protocol Test");
     let mut shares = HashMap::new();
     for i in 1u16 ..= 4u16 {
-      shares.insert(i, BigUint::zero());
+      shares.insert(i, Natural::ZERO);
     }
     let mut delta = None;
     let mut public_key: Option<Element> = None;
@@ -117,8 +126,8 @@ mod tests {
           let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
           for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
             let C_i = C_i + 1;
-            let i = BigUint::from(i);
-            eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
+            let i = Natural::from(i);
+            eval = eval.add(&C.commitment.mul(&i.pow(u64::try_from(C_i).unwrap())));
           }
           let existing: &mut Element = verification_shares.get_mut(&i).unwrap();
           let new = existing.add(&eval);
@@ -130,8 +139,8 @@ mod tests {
           let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
           for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
             let C_i = C_i + 1;
-            let i = BigUint::from(i);
-            eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
+            let i = Natural::from(i);
+            eval = eval.add(&C.commitment.mul(&i.pow(u64::try_from(C_i).unwrap())));
           }
           verification_shares.insert(i, eval);
         }
@@ -147,8 +156,13 @@ mod tests {
 
     // TODO: Replace with a proven, decentralized flow
     let ec_key = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-    let k_ciphertext =
-      cg.encrypt(&mut OsRng, &public_key, &BigUint::from_bytes_be(ec_key.to_repr().as_ref())).1;
+    let k_ciphertext = cg
+      .encrypt(
+        &mut OsRng,
+        &public_key,
+        &Natural::from_digits_desc(&256, ec_key.to_repr().into_iter().map(u16::from)).unwrap(),
+      )
+      .1;
     let k_ciphertext_0 = k_ciphertext.0.large_table();
     let k_ciphertext_1 = k_ciphertext.1.large_table();
     let ec_key = <Secp256k1 as Ciphersuite>::generator() * ec_key;
@@ -177,9 +191,7 @@ mod tests {
     let mut commitments = vec![];
     let mut r1_proofs = vec![];
     for _ in 0 .. 3 {
-      let mut num_bytes = [0; 32];
       let x_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-      num_bytes.copy_from_slice(x_i.to_repr().as_ref());
       x_is.push(x_i);
 
       X_is.push(<Secp256k1 as Ciphersuite>::generator() * x_i);
@@ -201,7 +213,8 @@ mod tests {
 
       // The following are decided and committed to yet withheld
       let y_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-      let y_i_uint = BigUint::from_bytes_be(y_i.to_repr().as_ref());
+      let y_i_uint =
+        Natural::from_digits_desc(&256, y_i.to_repr().into_iter().map(u16::from)).unwrap();
 
       let (y_i_randomness, y_i_ciphertext) = cg.encrypt(&mut OsRng, &public_key, &y_i_uint);
       println!(
@@ -416,8 +429,9 @@ mod tests {
     segment_time = std::time::Instant::now();
 
     // Multiply d by r
-    let dr_ciphertext =
-      d_ciphertext.mul_without_randomness(&BigUint::from_bytes_be(r.to_repr().as_ref()));
+    let dr_ciphertext = d_ciphertext.mul_without_randomness(
+      &Natural::from_digits_desc(&256, r.to_repr().into_iter().map(u16::from)).unwrap(),
+    );
     println!(
       "dr ciphertext calculation: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
@@ -429,8 +443,9 @@ mod tests {
     let m1_hash = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
 
     // Multiply y by H(m)
-    let my_ciphertext =
-      y_ciphertext.mul_without_randomness(&BigUint::from_bytes_be(m1_hash.to_repr().as_ref()));
+    let my_ciphertext = y_ciphertext.mul_without_randomness(
+      &Natural::from_digits_desc(&256, m1_hash.to_repr().into_iter().map(u16::from)).unwrap(),
+    );
 
     // dr_ciphertext is composed of d_ciphertext is ky ciphertexts
     // ky was commited to in round 1 and not revealed until round 2
@@ -462,17 +477,17 @@ mod tests {
       // The lagrange can be post-calculated so that the first `t` to publish shares for a
       // completed signature may be used together
       let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
-      let share_to_use = share_to_use * lagrange.abs().to_biguint().unwrap();
+      let share_to_use = share_to_use * lagrange.clone().unsigned_abs();
 
       // If the lagrange (a publicly known coefficient) is negative, use the negative form of the
       // ciphertext's randomness element
       let w_ciphertext_neg = w_ciphertext.0.clone().neg();
       let w_ciphertext_base =
-        if lagrange.is_positive() { &w_ciphertext.0 } else { &w_ciphertext_neg };
+        if lagrange.sign() == Ordering::Greater { &w_ciphertext.0 } else { &w_ciphertext_neg };
       let W_i = w_ciphertext_base.mul(&share_to_use);
       let z_ciphertext_neg = z_ciphertext.0.clone().neg();
       let z_ciphertext_base =
-        if lagrange.is_positive() { &z_ciphertext.0 } else { &z_ciphertext_neg };
+        if lagrange.sign() == Ordering::Greater { &z_ciphertext.0 } else { &z_ciphertext_neg };
       let Z_i = z_ciphertext_base.mul(&share_to_use);
 
       // Prove the encryption shares are well-formed
@@ -502,20 +517,21 @@ mod tests {
       for i in 0 .. r3_proofs.len() {
         let i_u16 = u16::try_from(i + 1).unwrap();
         let lagrange = IntegerSecretSharing::lagrange(4, i_u16, &set);
-        lagranged_shares
-          .push(verification_shares[&i_u16].mul(&lagrange.abs().to_biguint().unwrap()));
+        lagranged_shares.push(verification_shares[&i_u16].mul(&lagrange.clone().unsigned_abs()));
         lagranges.push(lagrange);
       }
       let mut verifier = BatchVerifier::new();
       for (i, proof) in r3_proofs.iter().enumerate() {
         let lagrange = &lagranges[i];
-        let share_max_size = BigUint::one() <<
-          (IntegerSecretSharing::share_size(&cg, 3, 4) + delta.bits() + lagrange.bits());
+        let share_max_size = Natural::ONE <<
+          (IntegerSecretSharing::share_size(&cg, 3, 4) +
+            delta.significant_bits() +
+            lagrange.significant_bits());
 
         let w_ciphertext_base =
-          if lagrange.is_positive() { &w_ciphertext.0 } else { &w_ciphertext_neg };
+          if lagrange.sign() == Ordering::Greater { &w_ciphertext.0 } else { &w_ciphertext_neg };
         let z_ciphertext_base =
-          if lagrange.is_positive() { &z_ciphertext.0 } else { &z_ciphertext_neg };
+          if lagrange.sign() == Ordering::Greater { &z_ciphertext.0 } else { &z_ciphertext_neg };
 
         // Verification of these can be delayed and only performed if an invalid signature is
         // produced
@@ -558,8 +574,8 @@ mod tests {
     let delta_cubed = &delta * &delta * &delta;
     let value_scaled_by = &delta_cubed % cg.p();
     // Invert value_scaled_by over p
-    let inverse = value_scaled_by.modpow(&(cg.p() - 2u8), cg.p());
-    debug_assert!((&inverse * &value_scaled_by).mod_floor(cg.p()).is_one());
+    let inverse = value_scaled_by.clone().mod_pow(&(cg.p() - Natural::from(2u8)), cg.p());
+    debug_assert!(((&inverse * &value_scaled_by) % cg.p()) == Natural::ONE);
 
     let w = {
       let M = w_ciphertext.1.mul(&delta_cubed).add(&W.neg());
@@ -580,13 +596,15 @@ mod tests {
     let s = ({
       let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
       let bytes_ref: &mut [u8] = bytes.as_mut();
-      let w_bytes = w.to_bytes_be();
+      let w_bytes =
+        w.to_digits_desc(&256u16).into_iter().map(|b| u8::try_from(b).unwrap()).collect::<Vec<_>>();
       bytes_ref[(32 - w_bytes.len()) ..].copy_from_slice(&w_bytes);
       <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
     }) * ({
       let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
       let bytes_ref: &mut [u8] = bytes.as_mut();
-      let z_bytes = z.to_bytes_be();
+      let z_bytes =
+        z.to_digits_desc(&256u16).into_iter().map(|b| u8::try_from(b).unwrap()).collect::<Vec<_>>();
       bytes_ref[(32 - z_bytes.len()) ..].copy_from_slice(&z_bytes);
       <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
     })

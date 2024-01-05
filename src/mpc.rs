@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use rand_core::{RngCore, CryptoRng};
 
-use num_traits::One;
-use num_bigint::{Sign, BigUint, BigInt};
+use malachite::{
+  num::{basic::traits::*, arithmetic::traits::*, logic::traits::*, conversion::traits::*},
+  *,
+};
 
 use transcript::Transcript;
 
@@ -19,7 +21,7 @@ impl CommitmentWithProof {
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
-    dlog: &BigUint,
+    dlog: &Natural,
   ) -> Self {
     let commitment = cg.g_table() * dlog;
     let proof = ZkDlogOutsideSubgroupProof::prove(rng, cg, transcript, dlog);
@@ -38,15 +40,15 @@ impl CommitmentWithProof {
 
 // TODO: Review the impact of 2022-1437 Remark 7 on the below
 pub struct IntegerSecretSharing {
-  pub(crate) delta: BigUint,
+  pub(crate) delta: Natural,
   pub(crate) commitments: Vec<CommitmentWithProof>,
-  pub(crate) shares: HashMap<u16, BigUint>,
+  pub(crate) shares: HashMap<u16, Natural>,
 }
 impl IntegerSecretSharing {
-  fn delta(n: u16) -> BigUint {
-    let mut accum = BigUint::one();
+  fn delta(n: u16) -> Natural {
+    let mut accum = Natural::ONE;
     for i in 2 ..= n {
-      accum *= i;
+      accum *= Natural::from(i);
     }
     accum
   }
@@ -54,10 +56,11 @@ impl IntegerSecretSharing {
   pub(crate) fn share_size(cg: &ClassGroup, t: u16, n: u16) -> u64 {
     let delta = Self::delta(n);
     // alpha is shared as alpha * delta
-    let alpha_bits = cg.p().bits() + delta.bits();
-    let coefficient_bits = cg.p().bits() + (&delta * t).bits() + 2;
+    let alpha_bits = cg.p().significant_bits() + delta.significant_bits();
+    let coefficient_bits =
+      cg.p().significant_bits() + (&delta * Natural::from(t)).significant_bits() + 2;
     // Coefficients have a factor of the following length
-    let coefficient_factor_bits = BigUint::from(n).pow(n.into()).bits();
+    let coefficient_factor_bits = Natural::from(n).pow(n.into()).significant_bits();
     alpha_bits + ((coefficient_bits + coefficient_factor_bits) * u64::from(t - 1))
   }
 
@@ -78,11 +81,12 @@ impl IntegerSecretSharing {
     // This is interpreted as ceil(log2(Dq)) + log2(2 * delta * t) + 1.
     // TODO: Double check this.
     let mut gen_coefficient = || {
-      let secret_bits = cg.p().bits() + (&delta * t).bits() + 2;
+      let secret_bits =
+        cg.p().significant_bits() + (&delta * Natural::from(t)).significant_bits() + 2;
       let mut secret = vec![0; secret_bits.div_ceil(8).try_into().unwrap()];
       rng.fill_bytes(&mut secret);
       secret[0] &= 0xff >> (8 - (secret_bits % 8));
-      BigUint::from_bytes_be(&secret)
+      Natural::from_digits_desc(&256, secret.into_iter().map(u16::from)).unwrap()
     };
 
     let mut r = vec![];
@@ -94,8 +98,8 @@ impl IntegerSecretSharing {
       &alpha_tilde +
         r.iter()
           .enumerate()
-          .map(|(r_i, r)| r * i.pow((r_i + 1).try_into().unwrap()))
-          .sum::<BigUint>()
+          .map(|(r_i, r)| r * Natural::from(i).pow((r_i + 1).try_into().unwrap()))
+          .sum::<Natural>()
     };
 
     let mut y = HashMap::new();
@@ -117,8 +121,8 @@ impl IntegerSecretSharing {
       let mut eval = commitments[0].commitment.mul(&(&delta * &delta));
       for (C_i, C) in commitments[1 ..].iter().enumerate() {
         let C_i = C_i + 1;
-        let i = BigUint::from(*i);
-        eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
+        let i = Natural::from(*i);
+        eval = eval.add(&C.commitment.mul(&i.pow(u64::try_from(C_i).unwrap())));
       }
       debug_assert_eq!(cg.g_table() * &(y * &delta), eval);
     }
@@ -126,18 +130,18 @@ impl IntegerSecretSharing {
     IntegerSecretSharing { delta, commitments, shares: y }
   }
 
-  pub fn lagrange(n: u16, i: u16, set: &[u16]) -> BigInt {
+  pub fn lagrange(n: u16, i: u16, set: &[u16]) -> Integer {
     let mut numerator = Self::delta(n);
-    let mut denominator = BigInt::one();
+    let mut denominator = Integer::ONE;
     for j in set {
       let j = *j;
       if i == j {
         continue;
       }
-      numerator *= j;
-      denominator *= i32::from(j) - i32::from(i);
+      numerator *= Natural::from(j);
+      denominator *= Integer::from(i32::from(j) - i32::from(i));
     }
-    let numerator = BigInt::from_biguint(Sign::Plus, numerator);
+    let numerator = Integer::from(numerator);
     numerator / denominator
   }
 }
@@ -147,8 +151,6 @@ fn integer_secret_sharing() {
   use rand_core::OsRng;
   use transcript::RecommendedTranscript;
 
-  use num_traits::{Zero, FromBytes};
-
   use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
 
   const LIMBS: usize = 256 / 64;
@@ -156,20 +158,21 @@ fn integer_secret_sharing() {
   let mut secp256k1_mod = [0; LIMBS * 8];
   secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
   secp256k1_mod[(LIMBS * 8) - 1] += 1;
-  let secp256k1_mod = BigUint::from_be_bytes(&secp256k1_mod);
+  let secp256k1_mod =
+    Natural::from_digits_desc(&256, secp256k1_mod.into_iter().map(u16::from)).unwrap();
 
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let transcript = || RecommendedTranscript::new(b"Integer Secret Sharing Test");
   let iss = IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), 3, 4);
 
-  let mut reconstructed = BigInt::zero();
+  let mut reconstructed = Integer::ZERO;
   let set = [1u16, 2, 4];
   for i in set {
-    reconstructed += BigInt::from_biguint(Sign::Plus, iss.shares[&i].clone()) *
-      IntegerSecretSharing::lagrange(4, i, &set);
+    reconstructed +=
+      Integer::from(iss.shares[&i].clone()) * IntegerSecretSharing::lagrange(4, i, &set);
   }
   assert_eq!(
-    cg.g_table() * &reconstructed.to_biguint().unwrap(),
+    cg.g_table() * &Natural::try_from(reconstructed).unwrap(),
     iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta))
   );
 }
