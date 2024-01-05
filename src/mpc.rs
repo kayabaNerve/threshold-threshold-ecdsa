@@ -21,7 +21,7 @@ impl CommitmentWithProof {
     transcript: &mut impl Transcript,
     dlog: &BigUint,
   ) -> Self {
-    let commitment = cg.g().mul(dlog);
+    let commitment = cg.g_table() * dlog;
     let proof = ZkDlogOutsideSubgroupProof::prove(rng, cg, transcript, dlog);
     Self { commitment, proof }
   }
@@ -120,7 +120,7 @@ impl IntegerSecretSharing {
         let i = BigUint::from(*i);
         eval = eval.add(&C.commitment.mul(&i.pow(u32::try_from(C_i).unwrap())));
       }
-      debug_assert_eq!(cg.g().mul(&(y * &delta)), eval);
+      debug_assert_eq!(cg.g_table() * &(y * &delta), eval);
     }
 
     IntegerSecretSharing { delta, commitments, shares: y }
@@ -169,7 +169,7 @@ fn integer_secret_sharing() {
       IntegerSecretSharing::lagrange(4, i, &set);
   }
   assert_eq!(
-    cg.g().mul(&reconstructed.to_biguint().unwrap()),
+    cg.g_table() * &reconstructed.to_biguint().unwrap(),
     iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta))
   );
 }

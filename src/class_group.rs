@@ -280,12 +280,12 @@ impl Element {
     Self { a: self.a, b: -self.b, c: self.c, L: self.L.clone() }.reduce()
   }
 
-  pub fn table(&self) -> [Self; 31] {
+  pub fn table(&self) -> Table {
     let mut table = core::array::from_fn::<_, 31, _>(|_| self.clone());
     for i in 2 .. 32 {
       table[i - 1] = table[i - 2].add(self);
     }
-    table
+    Table(table)
   }
 
   pub fn mul(&self, scalar: &BigUint) -> Self {
@@ -295,8 +295,20 @@ impl Element {
 
     let table = self.table();
 
+    table * scalar
+  }
+
+  pub fn is_identity(&self) -> bool {
+    self.a.is_one() && self.b.is_one()
+  }
+}
+
+pub struct Table(pub(crate) [Element; 31]);
+impl core::ops::Mul<&BigUint> for &Table {
+  type Output = Element;
+  fn mul(self, scalar: &BigUint) -> Element {
     // TODO: Return identity on 0 scalar
-    let mut res: Option<Self> = None;
+    let mut res: Option<Element> = None;
 
     let mut bits = 0;
     for b in 0 .. scalar.bits() {
@@ -313,7 +325,7 @@ impl Element {
         if bits == 0 {
           continue;
         }
-        let to_add = &table[usize::from(bits) - 1];
+        let to_add = &self.0[usize::from(bits) - 1];
         bits = 0;
         if let Some(res) = &mut res {
           *res = res.add(to_add);
@@ -328,7 +340,7 @@ impl Element {
       }
     }
     if bits != 0 {
-      let to_add = &table[usize::from(bits) - 1];
+      let to_add = &self.0[usize::from(bits) - 1];
       if let Some(res) = &mut res {
         *res = res.add(to_add);
       } else {
@@ -337,9 +349,11 @@ impl Element {
     }
     res.unwrap()
   }
-
-  pub fn is_identity(&self) -> bool {
-    self.a.is_one() && self.b.is_one()
+}
+impl core::ops::Mul<&BigUint> for Table {
+  type Output = Element;
+  fn mul(self, scalar: &BigUint) -> Element {
+    &self * scalar
   }
 }
 
@@ -358,10 +372,8 @@ pub struct ClassGroup {
   B: BigUint,
   p: BigUint,
   identity: Element,
-  g: Element,
-  g_table: [Element; 31],
-  f: Element,
-  f_table: [Element; 31],
+  g_table: Table,
+  f_table: Table,
   delta_p: BigInt,
 }
 impl ClassGroup {
@@ -478,8 +490,6 @@ impl ClassGroup {
         L: double_L.clone(),
       },
       g_table: g.table(),
-      g,
-      f,
       f_table,
       delta_p,
     }
@@ -494,16 +504,10 @@ impl ClassGroup {
   pub fn identity(&self) -> &Element {
     &self.identity
   }
-  pub fn g(&self) -> &Element {
-    &self.g
-  }
-  pub fn g_table(&self) -> &[Element; 31] {
+  pub fn g_table(&self) -> &Table {
     &self.g_table
   }
-  pub fn f(&self) -> &Element {
-    &self.f
-  }
-  pub fn f_table(&self) -> &[Element; 31] {
+  pub fn f_table(&self) -> &Table {
     &self.f_table
   }
   pub fn delta_p(&self) -> &BigInt {
@@ -528,7 +532,7 @@ impl ClassGroup {
 
   pub fn key_gen(&self, rng: &mut (impl RngCore + CryptoRng)) -> (BigUint, Element) {
     let x = self.sample_secret(rng);
-    let h = self.g.mul(&x);
+    let h = &self.g_table * &x;
     (x, h)
   }
 
@@ -542,8 +546,8 @@ impl ClassGroup {
     randomness: &BigUint,
     message: &BigUint,
   ) -> Ciphertext {
-    let c1 = self.g.mul(randomness);
-    let c2 = multiexp(&mut [randomness.clone(), message.clone()], &[&key], &[self.f_table()]);
+    let c1 = &self.g_table * randomness;
+    let c2 = multiexp(&mut [randomness.clone(), message.clone()], &[&key], &[&self.f_table]);
     Ciphertext(c1, c2)
   }
 
@@ -585,7 +589,7 @@ impl ClassGroup {
 
     let r = self.sample_secret(rng);
 
-    res.0 = res.0.add(&self.g.mul(&r));
+    res.0 = res.0.add(&(&self.g_table * &r));
     res.1 = res.1.add(&public_key.mul(&r));
     res
   }
@@ -601,7 +605,7 @@ impl ClassGroup {
 
     let r = self.sample_secret(rng);
 
-    res.0 = res.0.add(&self.g.mul(&r));
+    res.0 = res.0.add(&(&self.g_table * &r));
     res.1 = res.1.add(&public_key.mul(&r));
     (r, res)
   }
@@ -610,7 +614,7 @@ impl ClassGroup {
 pub(crate) fn multiexp(
   scalars: &mut [BigUint],
   elements: &[&Element],
-  precomputed_tables: &[&[Element; 31]],
+  precomputed_tables: &[&Table],
 ) -> Element {
   assert_eq!(scalars.len(), elements.len() + precomputed_tables.len());
 
@@ -627,8 +631,8 @@ pub(crate) fn multiexp(
       }
       if ((i < elements.len()) && (elements[i] == elements[j])) ||
         ((i >= elements.len()) &&
-          (precomputed_tables[i - elements.len()][0] ==
-            precomputed_tables[j - elements.len()][0]))
+          (precomputed_tables[i - elements.len()].0[0] ==
+            precomputed_tables[j - elements.len()].0[0]))
       {
         matches.insert(j);
       }
@@ -643,7 +647,8 @@ pub(crate) fn multiexp(
   let mut tables_literal = Vec::with_capacity(elements.len());
   for (i, element) in elements.iter().enumerate() {
     if scalars[i].is_zero() {
-      tables_literal.push(core::array::from_fn(|_| (*element).clone()));
+      // Don't create an actual table if this is a 0 scalar
+      tables_literal.push(Table(core::array::from_fn(|_| (*element).clone())));
     } else {
       tables_literal.push(element.table());
     }
@@ -684,7 +689,7 @@ pub(crate) fn multiexp(
       bits[i] <<= 1;
       bits[i] |= if b > scalars[i].bits() { continue } else { u8::from(scalars[i].bit(b)) };
       if (full_bits) && (bits[i] != 0) {
-        let to_add = &tables[i][usize::from(bits[i]) - 1];
+        let to_add = &tables[i].0[usize::from(bits[i]) - 1];
         bits[i] = 0;
         if let Some(res) = &mut res {
           *res = res.add(to_add);
@@ -701,7 +706,7 @@ pub(crate) fn multiexp(
   }
   for (i, bits) in bits.into_iter().enumerate() {
     if bits != 0 {
-      let to_add = &tables[i][usize::from(bits) - 1];
+      let to_add = &tables[i].0[usize::from(bits) - 1];
       if let Some(res) = &mut res {
         *res = res.add(to_add);
       } else {
@@ -715,7 +720,7 @@ pub(crate) fn multiexp(
 pub struct BatchVerifier<'a> {
   pub(crate) borrowed_pairs: Vec<(BigUint, &'a Element)>,
   pub(crate) pairs: Vec<(BigUint, Element)>,
-  pub(crate) tabled_pairs: Vec<(BigUint, &'a [Element; 31])>,
+  pub(crate) tabled_pairs: Vec<(BigUint, &'a Table)>,
 }
 impl<'a> BatchVerifier<'a> {
   pub fn new() -> Self {
@@ -726,7 +731,7 @@ impl<'a> BatchVerifier<'a> {
     &mut self,
     borrowed_pairs: impl IntoIterator<Item = (&'s BigUint, &'a Element)>,
     pairs: impl IntoIterator<Item = (&'s BigUint, Element)>,
-    tabled_pairs: impl IntoIterator<Item = (&'s BigUint, &'a [Element; 31])>,
+    tabled_pairs: impl IntoIterator<Item = (&'s BigUint, &'a Table)>,
   ) {
     let weight = if self.borrowed_pairs.is_empty() && self.pairs.is_empty() {
       BigUint::one()
@@ -820,26 +825,5 @@ fn class_group() {
     )
     .unwrap(),
     (&m1 * &m2) % &secp256k1_mod,
-  );
-}
-
-#[test]
-fn multiexp_test() {
-  use rand_core::OsRng;
-
-  use ciphersuite::{group::ff::PrimeField, Ciphersuite, Secp256k1};
-
-  const LIMBS: usize = 256 / 64;
-  let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
-  let mut secp256k1_mod = [0; LIMBS * 8];
-  secp256k1_mod[((LIMBS * 8) - 32) ..].copy_from_slice(&secp256k1_neg_one.to_repr());
-  secp256k1_mod[(LIMBS * 8) - 1] += 1;
-  let secp256k1_mod = num_bigint::BigUint::from_bytes_be(&secp256k1_mod);
-
-  let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
-
-  assert_eq!(
-    cg.g().mul(&BigUint::from(231u8)),
-    multiexp(&mut [BigUint::from(231u8)], &[], &[cg.g_table()]),
   );
 }

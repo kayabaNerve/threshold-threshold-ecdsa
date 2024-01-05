@@ -64,24 +64,24 @@ impl ZkDlogOutsideSubgroupProof {
     transcript: &mut impl Transcript,
     x: &BigUint,
   ) -> Self {
-    Self::transcript_statement(transcript, &cg.g().mul(x));
+    Self::transcript_statement(transcript, &(cg.g_table() * x));
 
     // k is intended to be sampled from [-B, B]. We reduce the space by half yet don't sample from
     // -B as we can't calculate negatives over a field of unknown order (which has implications
     // later when s is calculated)
     let k = cg.sample_secret(rng);
     // If this is moved off `g`, we MUST transcript the g used
-    let R = cg.g().mul(&k);
+    let R = cg.g_table() * &k;
 
     let c = Self::transcript_R(cg, transcript, &R);
 
     let s = k + (&c * x);
     let (d, e) = (&s / cg.p(), s.mod_floor(cg.p()));
-    let D = cg.g().mul(&d);
+    let D = cg.g_table() * &d;
 
     let l = Self::transcript_De(transcript, &D, &e);
     let (q, r) = (&s / &l, s.mod_floor(&l));
-    let Q = cg.g().mul(&q);
+    let Q = cg.g_table() * &q;
 
     ZkDlogOutsideSubgroupProof { R, D, e, Q, r }
   }
@@ -215,8 +215,8 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
       s_m_uint += BigUint::from(u8::from(bit)) << i;
     }
 
-    let S1 = public_key.mul(&s_p).add(&cg.f().mul(&s_m_uint));
-    let S2 = cg.g().mul(&s_p);
+    let S1 = public_key.mul(&s_p).add(&(cg.f_table() * &s_m_uint));
+    let S2 = cg.g_table() * &s_p;
     let S_caret = C::generator() * s_m;
     let c = Self::transcript_Ss(cg, transcript, &S1, &S2, S_caret);
     let mut c_as_scalar = C::F::ZERO;
@@ -234,7 +234,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     let e_p = u_p.mod_floor(cg.p());
 
     let D1 = public_key.mul(&d_p);
-    let D2 = cg.g().mul(&d_p);
+    let D2 = cg.g_table() * &d_p;
 
     let l = Self::transcript_u_Ds_es(transcript, u_m, &D1, &D2, &e_p);
 
@@ -242,7 +242,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     let r_p = u_p.mod_floor(&l);
 
     let Q1 = public_key.mul(&q_p);
-    let Q2 = cg.g().mul(&q_p);
+    let Q2 = cg.g_table() * &q_p;
 
     (randomness, ciphertext, Self { S1, S2, S_caret, u_m, D1, D2, e_p, Q1, Q2, r_p })
   }
@@ -253,11 +253,11 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     cg: &'a ClassGroup,
     verifier: &mut BatchVerifier<'a>,
     transcript: &mut impl Transcript,
-    public_key_table: &'a [Element; 31],
+    public_key_table: &'a Table,
     ciphertext: &'a Ciphertext,
     point: C::G,
   ) -> Result<(), ()> {
-    Self::transcript_statement(transcript, &public_key_table[0], ciphertext, point);
+    Self::transcript_statement(transcript, &public_key_table.0[0], ciphertext, point);
 
     let c = Self::transcript_Ss(cg, transcript, &self.S1, &self.S2, self.S_caret);
     let mut c_as_scalar = C::F::ZERO;
@@ -309,16 +309,20 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
 
 #[derive(Clone, Copy)]
 pub enum ElementOrTable<'a> {
+  Identity,
   Element(&'a Element),
-  Table(&'a [Element; 31]),
+  Table(&'a Table),
 }
 impl<'a> From<&'a Element> for ElementOrTable<'a> {
   fn from(element: &'a Element) -> Self {
+    if element.is_identity() {
+      return ElementOrTable::Identity;
+    }
     ElementOrTable::Element(element)
   }
 }
-impl<'a> From<&'a [Element; 31]> for ElementOrTable<'a> {
-  fn from(table: &'a [Element; 31]) -> Self {
+impl<'a> From<&'a Table> for ElementOrTable<'a> {
+  fn from(table: &'a Table) -> Self {
     ElementOrTable::Table(table)
   }
 }
@@ -330,6 +334,7 @@ pub struct ZkRelationProof<const N: usize, const M: usize> {
 }
 impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
   fn transcript_statement(
+    cg: &ClassGroup,
     transcript: &mut impl Transcript,
     Xs: &[[ElementOrTable<'_>; M]; N],
     Ys: &[&Element; N],
@@ -340,8 +345,9 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     for Xs in Xs {
       for X in Xs {
         let X = match X {
+          ElementOrTable::Identity => cg.identity(),
           ElementOrTable::Element(X) => X,
-          ElementOrTable::Table(X) => &X[0],
+          ElementOrTable::Table(X) => &X.0[0],
         };
         X.transcript(b"X", transcript);
       }
@@ -366,29 +372,52 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     Xs: [[ElementOrTable<'_>; M]; N],
     ws: [&BigUint; M],
   ) -> Self {
-    let mut Ys: [_; N] = core::array::from_fn(|_| cg.identity().clone());
-    for (i, Xs) in Xs.iter().enumerate() {
-      for (j, X) in Xs.iter().enumerate() {
-        let X = match X {
-          ElementOrTable::Element(X) => X,
-          ElementOrTable::Table(X) => &X[0],
-        };
-        Ys[i] = Ys[i].add(&X.mul(ws[j]));
+    let identity_table = Table(core::array::from_fn(|_| cg.identity().clone()));
+    let mut adhoc_tables = vec![];
+    for Xs in Xs {
+      for X in Xs {
+        if let ElementOrTable::Element(X) = X {
+          adhoc_tables.push(X.table());
+        }
       }
     }
-    Self::transcript_statement(transcript, &Xs, &core::array::from_fn(|i| &Ys[i]));
+
+    let mut a_t = 0;
+    let tables: [[_; M]; N] = core::array::from_fn(|i| {
+      core::array::from_fn(|j| match Xs[i][j] {
+        ElementOrTable::Identity => &identity_table,
+        ElementOrTable::Element(_) => {
+          let res = &adhoc_tables[a_t];
+          a_t += 1;
+          res
+        }
+        ElementOrTable::Table(X) => X,
+      })
+    });
+
+    let mut Ys: [_; N] = core::array::from_fn(|_| cg.identity().clone());
+    for (i, Xs) in tables.iter().enumerate() {
+      let mut scalars = vec![];
+      let mut tables = vec![];
+      for (j, X) in Xs.iter().enumerate() {
+        scalars.push(ws[j].clone());
+        tables.push(*X);
+      }
+      Ys[i] = multiexp(&mut scalars, &[], &tables);
+    }
+    Self::transcript_statement(cg, transcript, &Xs, &core::array::from_fn(|i| &Ys[i]));
 
     let rs = core::array::from_fn::<_, M, _>(|_| cg.sample_secret(rng));
     let mut Ts = core::array::from_fn(|_| cg.identity().clone());
     for i in 0 .. N {
+      let mut scalars = vec![];
+      let mut these_tables = vec![];
       #[allow(clippy::needless_range_loop)]
       for j in 0 .. M {
-        let X = match Xs[i][j] {
-          ElementOrTable::Element(X) => X,
-          ElementOrTable::Table(X) => &X[0],
-        };
-        Ts[i] = Ts[i].add(&X.mul(&rs[j]));
+        scalars.push(rs[j].clone());
+        these_tables.push(tables[i][j]);
       }
+      Ts[i] = multiexp(&mut scalars, &[], &these_tables);
     }
     let c = Self::transcript_Ts(transcript, &Ts);
     let mut us = core::array::from_fn(|_| BigUint::zero());
@@ -410,7 +439,7 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     Xs: [[ElementOrTable<'a>; M]; N],
     Ys: [&'a Element; N],
   ) -> Result<(), ()> {
-    Self::transcript_statement(transcript, &Xs, &Ys);
+    Self::transcript_statement(cg, transcript, &Xs, &Ys);
 
     for u in &self.us {
       if u > &((S * &(BigUint::one() << 256)) + cg.secret_bound()) {
@@ -424,6 +453,7 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
       let mut tabled_pairs = vec![];
       for j in 0 .. M {
         match Xs[i][j] {
+          ElementOrTable::Identity => continue,
           ElementOrTable::Element(X) => pairs.push((&self.us[j], X)),
           ElementOrTable::Table(X) => tabled_pairs.push((&self.us[j], X)),
         }

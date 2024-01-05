@@ -149,6 +149,8 @@ mod tests {
     let ec_key = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
     let k_ciphertext =
       cg.encrypt(&mut OsRng, &public_key, &BigUint::from_bytes_be(ec_key.to_repr().as_ref())).1;
+    let k_ciphertext_0 = k_ciphertext.0.table();
+    let k_ciphertext_1 = k_ciphertext.1.table();
     let ec_key = <Secp256k1 as Ciphersuite>::generator() * ec_key;
     dbg!("Shimmed key gen");
 
@@ -208,8 +210,11 @@ mod tests {
       );
       segment_time = std::time::Instant::now();
 
-      let (ky_i_randomness, ky_i_ciphertext) =
-        cg.mul(&mut OsRng, &public_key, &k_ciphertext, &y_i_uint);
+      let ky_i_randomness = cg.sample_secret(&mut OsRng);
+      let mut ky_i_ciphertext =
+        Ciphertext(&k_ciphertext_0 * &y_i_uint, &k_ciphertext_1 * &y_i_uint);
+      ky_i_ciphertext.0 = ky_i_ciphertext.0.add(&(cg.g_table() * &ky_i_randomness));
+      ky_i_ciphertext.1 = ky_i_ciphertext.1.add(&(&public_key_table * &ky_i_randomness));
       println!(
         "Scaled k by y_i: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
@@ -222,7 +227,7 @@ mod tests {
       // yet)
       // This prevents deciding randomness after seeing everyone else's and using Wagner's
       // algorithm to efficiently calculate randomnesses which will cause unintended encryptions
-      let xy_i_commitment = cg.g().mul(&xy_i_randomness);
+      let xy_i_commitment = cg.g_table() * &xy_i_randomness;
       commitments
         .push((commitment(&y_i_ciphertext, &ky_i_ciphertext, &xy_i_commitment), xy_i_commitment));
 
@@ -267,6 +272,8 @@ mod tests {
     for x_i_ciphertext in &x_i_ciphertexts {
       x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext);
     }
+    let x_ciphertext_0 = x_ciphertext.0.table();
+    let x_ciphertext_1 = x_ciphertext.1.table();
     println!(
       "Calculated X: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
@@ -274,22 +281,40 @@ mod tests {
     segment_time = std::time::Instant::now();
 
     // Round 2: Perform multiplication of the sum nonce by our shares of y
+
+    // For 2022-1437 5.2:
+    // a = y randomness
+    // b = xy randomness
+    // c = ky randomness
+    // ws = [a, b, c, y]
+    // Ys = [..y_ciphertext, xy_randomness_commitment, ..xy_ciphertext, ..ky_ciphertext]
+    // Xs = [
+    //   [G,        Identity, Identity, Identity],
+    //   [K,        Identity, Identity, F],
+    //
+    //   [Identity, G,        Identity, Identity],
+    //   [Identity, G,        Identity, x_ciphertext.0],
+    //   [Identity, K,        Identity, x_ciphertext.1],
+    //
+    //   [Identity, Identity, G,        k_ciphertext.0],
+    //   [Identity, Identity, K,        k_ciphertext.1],
+    // ]
     #[rustfmt::skip]
     let relations = [
-      [cg.g_table().into(),        cg.identity().into(),       cg.identity().into(),        cg.identity().into()],
-      [(&public_key_table).into(), cg.identity().into(),       cg.identity().into(),        cg.f_table().into()],
+      [cg.g_table().into(),        ElementOrTable::Identity,       ElementOrTable::Identity,   ElementOrTable::Identity],
+      [(&public_key_table).into(), ElementOrTable::Identity,       ElementOrTable::Identity,   cg.f_table().into()],
 
       // TODO: Does this break the ZK properties? You can subtract the commitment to the
       // xy_i_randomness (since it uses an existing generator) and have just the scaled x
       // randomness
       // While it *shouldn't* be feasible to calculate the DLog for that, it's at least
       // suboptimal?
-      [cg.identity().into(),       cg.g_table().into(),        cg.identity().into(),       cg.identity().into()],
-      [cg.identity().into(),       cg.g_table().into(),        cg.identity().into(),       (&x_ciphertext.0).into()],
-      [cg.identity().into(),       (&public_key_table).into(), cg.identity().into(),       (&x_ciphertext.1).into()],
+      [ElementOrTable::Identity,       cg.g_table().into(),        ElementOrTable::Identity,   ElementOrTable::Identity],
+      [ElementOrTable::Identity,       cg.g_table().into(),        ElementOrTable::Identity,   (&x_ciphertext_0).into()],
+      [ElementOrTable::Identity,       (&public_key_table).into(), ElementOrTable::Identity,   (&x_ciphertext_1).into()],
 
-      [cg.identity().into(),       cg.identity().into(),       cg.g_table().into(),        (&k_ciphertext.0).into()],
-      [cg.identity().into(),       cg.identity().into(),       (&public_key_table).into(), (&k_ciphertext.1).into()],
+      [ElementOrTable::Identity,       ElementOrTable::Identity,   cg.g_table().into(),        (&k_ciphertext_0).into()],
+      [ElementOrTable::Identity,       ElementOrTable::Identity,   (&public_key_table).into(), (&k_ciphertext_1).into()],
     ];
 
     let mut y_i_ciphertexts = vec![];
@@ -301,9 +326,10 @@ mod tests {
       let (ky_i_randomness, ky_i_ciphertext) = ky_i_full[i].clone();
       let xy_i_randomness = xy_i_randomnesses[i].clone();
 
-      let mut xy_i_ciphertext = x_ciphertext.mul_without_randomness(&y_i_uint);
-      xy_i_ciphertext.0 = xy_i_ciphertext.0.add(&cg.g().mul(&xy_i_randomness));
-      xy_i_ciphertext.1 = xy_i_ciphertext.1.add(&public_key.mul(&xy_i_randomness));
+      let mut xy_i_ciphertext =
+        Ciphertext(&x_ciphertext_0 * &y_i_uint, &x_ciphertext_1 * &y_i_uint);
+      xy_i_ciphertext.0 = xy_i_ciphertext.0.add(&(cg.g_table() * &xy_i_randomness));
+      xy_i_ciphertext.1 = xy_i_ciphertext.1.add(&(&public_key_table * &xy_i_randomness));
       println!(
         "Created xy_i ciphertexts: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
@@ -316,37 +342,6 @@ mod tests {
         commitment(&y_i_ciphertext, &ky_i_ciphertext, &commitments[i].1,)
       );
 
-      // For 2022-1437 5.2, a scaled ciphertext proof can be created with:
-      // m=2, ws [a, y]
-      // i=2, Ys [(a + by)G, (a + by)K + xyF]
-      //      Xs [[G, bG], [K, bK + xF]]
-      //
-      // For an additionally proven Y_i with ciphertext aG, aK + yF, we need to add 2 is:
-      // +Ys [aG, aK + yF]
-      // +Xs [[G, Identity], [K, F]]
-      //
-      // And then finally, since we need to prove both xy and ky, we add:
-      // +m for randomness c, padding prior Xs with Identity
-      // +Ys [ky_i_ciphertext.0, ky_i_ciphertext.1]
-      // +Xs [[Identity, k_ciphertext.0, G], [Identity, k_ciphertext.1, K]]
-      //
-      // Re-organized, and with distinct randomness for the y_i ciphertext and further usage, we
-      // create a m=4, i=6 we organize as follows:
-      // a = y randomness
-      // b = xy randomness
-      // c = ky randomness
-      // ws = [a, b, c, y]
-      // Ys = [..y_ciphertext, ..xy_ciphertext, ..ky_ciphertext]
-      // Xs = [
-      //   [G,        Identity, Identity, Identity],
-      //   [K,        Identity, Identity, F],
-      //   [Identity, G,        Identity, x_ciphertext.0],
-      //   [Identity, K,        Identity, x_ciphertext.1],
-      //   [Identity, Identity, G,        k_ciphertext.0],
-      //   [Identity, Identity, K,        k_ciphertext.1],
-      // ]
-      //
-      // Finally, for concurrent security, add an additional row for the xy randomness commitment
       #[rustfmt::skip]
       let proof = ZkRelationProof::prove(
         &mut OsRng,
@@ -560,21 +555,19 @@ mod tests {
     segment_time = std::time::Instant::now();
 
     // Recover the messages
+    let delta_cubed = &delta * &delta * &delta;
+    let value_scaled_by = &delta_cubed % cg.p();
+    // Invert value_scaled_by over p
+    let inverse = value_scaled_by.modpow(&(cg.p() - 2u8), cg.p());
+    debug_assert!((&inverse * &value_scaled_by).mod_floor(cg.p()).is_one());
+
     let w = {
-      let M = w_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&W.neg());
-      let value_scaled_by = (&delta * &delta * &delta) % cg.p();
-      // Invert value_scaled_by over p
-      let inverse = value_scaled_by.modpow(&(cg.p() - 2u8), cg.p());
-      assert!((&inverse * &value_scaled_by).mod_floor(cg.p()).is_one());
-      (cg.solve(M).unwrap() * inverse) % cg.p()
+      let M = w_ciphertext.1.mul(&delta_cubed).add(&W.neg());
+      (cg.solve(M).unwrap() * &inverse) % cg.p()
     };
     let z = {
-      let M = z_ciphertext.1.mul(&(&delta * &delta * &delta)).add(&Z.neg());
-      let value_scaled_by = (&delta * &delta * &delta) % cg.p();
-      // Invert value_scaled_by over p
-      let inverse = value_scaled_by.modpow(&(cg.p() - 2u8), cg.p());
-      assert!((&inverse * &value_scaled_by).mod_floor(cg.p()).is_one());
-      (cg.solve(M).unwrap() * inverse) % cg.p()
+      let M = z_ciphertext.1.mul(&delta_cubed).add(&Z.neg());
+      (cg.solve(M).unwrap() * &inverse) % cg.p()
     };
 
     println!(
@@ -583,17 +576,18 @@ mod tests {
     );
     segment_time = std::time::Instant::now();
 
-    // Add the share for signer 1
     // Create and publish the signature
     let s = ({
       let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
       let bytes_ref: &mut [u8] = bytes.as_mut();
-      bytes_ref.copy_from_slice(&w.to_bytes_be());
+      let w_bytes = w.to_bytes_be();
+      bytes_ref[(32 - w_bytes.len()) ..].copy_from_slice(&w_bytes);
       <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
     }) * ({
       let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
       let bytes_ref: &mut [u8] = bytes.as_mut();
-      bytes_ref.copy_from_slice(&z.to_bytes_be());
+      let z_bytes = z.to_bytes_be();
+      bytes_ref[(32 - z_bytes.len()) ..].copy_from_slice(&z_bytes);
       <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
     })
     .invert()
