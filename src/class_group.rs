@@ -280,12 +280,20 @@ impl Element {
     Self { a: self.a, b: -self.b, c: self.c, L: self.L.clone() }.reduce()
   }
 
-  pub fn table(&self) -> Table {
+  pub fn small_table(&self) -> Table {
     let mut table = core::array::from_fn::<_, 31, _>(|_| self.clone());
     for i in 2 .. 32 {
       table[i - 1] = table[i - 2].add(self);
     }
-    Table(table)
+    Table::Small(SmallTable(table).into())
+  }
+
+  pub fn large_table(&self) -> Table {
+    let mut table = core::array::from_fn::<_, 1023, _>(|_| self.clone());
+    for i in 2 .. 1024 {
+      table[i - 1] = table[i - 2].add(self);
+    }
+    Table::Large(LargeTable(table).into())
   }
 
   pub fn mul(&self, scalar: &BigUint) -> Self {
@@ -293,8 +301,7 @@ impl Element {
       return self.clone();
     }
 
-    let table = self.table();
-
+    let table = self.small_table();
     table * scalar
   }
 
@@ -303,8 +310,8 @@ impl Element {
   }
 }
 
-pub struct Table(pub(crate) [Element; 31]);
-impl core::ops::Mul<&BigUint> for &Table {
+pub struct SmallTable(pub(crate) [Element; 31]);
+impl core::ops::Mul<&BigUint> for &SmallTable {
   type Output = Element;
   fn mul(self, scalar: &BigUint) -> Element {
     // TODO: Return identity on 0 scalar
@@ -315,7 +322,7 @@ impl core::ops::Mul<&BigUint> for &Table {
       let full_bits = (b % 5) == 4;
       let b = scalar.bits() - 1 - b;
       bits <<= 1;
-      bits |= u8::from(scalar.bit(b));
+      bits |= u16::from(scalar.bit(b));
       if full_bits {
         if let Some(res) = &mut res {
           for _ in 0 .. 5 {
@@ -350,10 +357,94 @@ impl core::ops::Mul<&BigUint> for &Table {
     res.unwrap()
   }
 }
+impl core::ops::Mul<&BigUint> for SmallTable {
+  type Output = Element;
+  fn mul(self, scalar: &BigUint) -> Element {
+    &self * scalar
+  }
+}
+
+pub struct LargeTable(pub(crate) [Element; 1023]);
+impl core::ops::Mul<&BigUint> for &LargeTable {
+  type Output = Element;
+  fn mul(self, scalar: &BigUint) -> Element {
+    // TODO: Return identity on 0 scalar
+    let mut res: Option<Element> = None;
+
+    let mut bits: u16 = 0;
+    for b in 0 .. scalar.bits() {
+      let full_bits = (b % 10) == 9;
+      let b = scalar.bits() - 1 - b;
+      bits <<= 1;
+      bits |= u16::from(scalar.bit(b));
+      if full_bits {
+        if let Some(res) = &mut res {
+          for _ in 0 .. 10 {
+            *res = res.double();
+          }
+        }
+        if bits == 0 {
+          continue;
+        }
+        let to_add = &self.0[usize::from(bits) - 1];
+        bits = 0;
+        if let Some(res) = &mut res {
+          *res = res.add(to_add);
+        } else {
+          res = Some(to_add.clone());
+        }
+      }
+    }
+    if let Some(res) = &mut res {
+      for _ in 0 .. (scalar.bits() % 10) {
+        *res = res.double();
+      }
+    }
+    if bits != 0 {
+      let to_add = &self.0[usize::from(bits) - 1];
+      if let Some(res) = &mut res {
+        *res = res.add(to_add);
+      } else {
+        res = Some(to_add.clone());
+      }
+    }
+    res.unwrap()
+  }
+}
+impl core::ops::Mul<&BigUint> for LargeTable {
+  type Output = Element;
+  fn mul(self, scalar: &BigUint) -> Element {
+    &self * scalar
+  }
+}
+
+pub enum Table {
+  Small(Box<SmallTable>),
+  Large(Box<LargeTable>),
+}
+impl core::ops::Mul<&BigUint> for &Table {
+  type Output = Element;
+  fn mul(self, scalar: &BigUint) -> Element {
+    match self {
+      Table::Small(table) => &**table * scalar,
+      Table::Large(table) => &**table * scalar,
+    }
+  }
+}
 impl core::ops::Mul<&BigUint> for Table {
   type Output = Element;
   fn mul(self, scalar: &BigUint) -> Element {
     &self * scalar
+  }
+}
+
+impl core::ops::Index<usize> for Table {
+  type Output = Element;
+  fn index(&self, index: usize) -> &Element {
+    match self {
+      Table::Small(table) => &table.0[index],
+      Table::Large(table) => &table.0[index],
+    }
   }
 }
 
@@ -477,7 +568,7 @@ impl ClassGroup {
       b: L,
       L: double_L.clone(),
     };
-    let f_table = f.table();
+    let f_table = f.large_table();
     let g = multiexp(&mut [p.clone(), k.clone()], &[&g_init], &[&f_table]);
 
     ClassGroup {
@@ -489,7 +580,7 @@ impl ClassGroup {
         c: Element::c(&BigInt::one(), BigInt::one(), &delta_p).unwrap(),
         L: double_L.clone(),
       },
-      g_table: g.table(),
+      g_table: g.large_table(),
       f_table,
       delta_p,
     }
@@ -631,8 +722,8 @@ pub(crate) fn multiexp(
       }
       if ((i < elements.len()) && (elements[i] == elements[j])) ||
         ((i >= elements.len()) &&
-          (precomputed_tables[i - elements.len()].0[0] ==
-            precomputed_tables[j - elements.len()].0[0]))
+          (precomputed_tables[i - elements.len()][0] ==
+            precomputed_tables[j - elements.len()][0]))
       {
         matches.insert(j);
       }
@@ -648,9 +739,10 @@ pub(crate) fn multiexp(
   for (i, element) in elements.iter().enumerate() {
     if scalars[i].is_zero() {
       // Don't create an actual table if this is a 0 scalar
-      tables_literal.push(Table(core::array::from_fn(|_| (*element).clone())));
+      tables_literal
+        .push(Table::Small(SmallTable(core::array::from_fn(|_| (*element).clone())).into()));
     } else {
-      tables_literal.push(element.table());
+      tables_literal.push(element.small_table());
     }
   }
   let mut tables = Vec::with_capacity(scalars.len());
@@ -669,7 +761,7 @@ pub(crate) fn multiexp(
   scalar_bits.sort_unstable();
   let scalar_bits = scalar_bits.pop().unwrap();
 
-  let mut bits = vec![0u8; tables.len()];
+  let mut bits = vec![0u16; tables.len()];
   for b in 0 .. scalar_bits {
     for i in 0 .. tables.len() {
       if (i == 0) && ((b % 5) == 4) {
@@ -684,12 +776,15 @@ pub(crate) fn multiexp(
         continue;
       }
 
-      let full_bits = (b % 5) == 4;
+      let full_short_bits = (b % 5) == 4;
+      let full_long_bits = (b % 10) == 9;
+      let full_bits =
+        if matches!(&tables[i], Table::Large(_)) { full_long_bits } else { full_short_bits };
       let b = scalar_bits - 1 - b;
       bits[i] <<= 1;
-      bits[i] |= if b > scalars[i].bits() { continue } else { u8::from(scalars[i].bit(b)) };
+      bits[i] |= if b > scalars[i].bits() { continue } else { u16::from(scalars[i].bit(b)) };
       if (full_bits) && (bits[i] != 0) {
-        let to_add = &tables[i].0[usize::from(bits[i]) - 1];
+        let to_add = &tables[i][usize::from(bits[i]) - 1];
         bits[i] = 0;
         if let Some(res) = &mut res {
           *res = res.add(to_add);
@@ -706,7 +801,7 @@ pub(crate) fn multiexp(
   }
   for (i, bits) in bits.into_iter().enumerate() {
     if bits != 0 {
-      let to_add = &tables[i].0[usize::from(bits) - 1];
+      let to_add = &tables[i][usize::from(bits) - 1];
       if let Some(res) = &mut res {
         *res = res.add(to_add);
       } else {

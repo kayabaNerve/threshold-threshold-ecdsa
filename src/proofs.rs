@@ -138,12 +138,12 @@ pub struct ZkEncryptionProof<C: Ciphersuite> {
 impl<C: Ciphersuite> ZkEncryptionProof<C> {
   fn transcript_statement(
     transcript: &mut impl Transcript,
-    public_key: &Element,
+    public_key_table: &Table,
     ciphertext: &Ciphertext,
     point: C::G,
   ) {
     transcript.domain_separate(b"ZkEncryptionProof");
-    public_key.transcript(b"public_key", transcript);
+    public_key_table[0].transcript(b"public_key", transcript);
     ciphertext.0.transcript(b"ciphertext_randomness", transcript);
     ciphertext.1.transcript(b"ciphertext_message", transcript);
     transcript.append_message(b"point", point.to_bytes());
@@ -192,7 +192,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     rng: &mut (impl RngCore + CryptoRng),
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
-    public_key: &Element,
+    public_key_table: &Table,
     scalar: &C::F,
   ) -> (BigUint, Ciphertext, Self) {
     let randomness = crate::sample_number_less_than(rng, &(cg.bound() << 128));
@@ -200,9 +200,9 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     for (i, bit) in scalar.to_le_bits().into_iter().enumerate() {
       scalar_uint += BigUint::from(u8::from(bit)) << i;
     }
-    let ciphertext = cg.encrypt_with_randomness(public_key, &randomness, &scalar_uint);
+    let ciphertext = cg.encrypt_with_randomness(&public_key_table[0], &randomness, &scalar_uint);
 
-    Self::transcript_statement(transcript, public_key, &ciphertext, C::generator() * *scalar);
+    Self::transcript_statement(transcript, public_key_table, &ciphertext, C::generator() * *scalar);
 
     let B = cg.bound() << (128 + 128 + 2);
 
@@ -215,7 +215,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
       s_m_uint += BigUint::from(u8::from(bit)) << i;
     }
 
-    let S1 = public_key.mul(&s_p).add(&(cg.f_table() * &s_m_uint));
+    let S1 = multiexp(&mut [s_p.clone(), s_m_uint], &[], &[public_key_table, cg.f_table()]);
     let S2 = cg.g_table() * &s_p;
     let S_caret = C::generator() * s_m;
     let c = Self::transcript_Ss(cg, transcript, &S1, &S2, S_caret);
@@ -233,7 +233,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     let d_p = &u_p / cg.p();
     let e_p = u_p.mod_floor(cg.p());
 
-    let D1 = public_key.mul(&d_p);
+    let D1 = public_key_table * &d_p;
     let D2 = cg.g_table() * &d_p;
 
     let l = Self::transcript_u_Ds_es(transcript, u_m, &D1, &D2, &e_p);
@@ -241,7 +241,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     let q_p = &u_p / &l;
     let r_p = u_p.mod_floor(&l);
 
-    let Q1 = public_key.mul(&q_p);
+    let Q1 = public_key_table * &q_p;
     let Q2 = cg.g_table() * &q_p;
 
     (randomness, ciphertext, Self { S1, S2, S_caret, u_m, D1, D2, e_p, Q1, Q2, r_p })
@@ -257,7 +257,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     ciphertext: &'a Ciphertext,
     point: C::G,
   ) -> Result<(), ()> {
-    Self::transcript_statement(transcript, &public_key_table.0[0], ciphertext, point);
+    Self::transcript_statement(transcript, public_key_table, ciphertext, point);
 
     let c = Self::transcript_Ss(cg, transcript, &self.S1, &self.S2, self.S_caret);
     let mut c_as_scalar = C::F::ZERO;
@@ -347,7 +347,7 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
         let X = match X {
           ElementOrTable::Identity => cg.identity(),
           ElementOrTable::Element(X) => X,
-          ElementOrTable::Table(X) => &X.0[0],
+          ElementOrTable::Table(X) => &X[0],
         };
         X.transcript(b"X", transcript);
       }
@@ -372,12 +372,12 @@ impl<const N: usize, const M: usize> ZkRelationProof<N, M> {
     Xs: [[ElementOrTable<'_>; M]; N],
     ws: [&BigUint; M],
   ) -> Self {
-    let identity_table = Table(core::array::from_fn(|_| cg.identity().clone()));
+    let identity_table = cg.identity().small_table();
     let mut adhoc_tables = vec![];
     for Xs in Xs {
       for X in Xs {
         if let ElementOrTable::Element(X) = X {
-          adhoc_tables.push(X.table());
+          adhoc_tables.push(X.small_table());
         }
       }
     }
@@ -511,13 +511,18 @@ fn encryption() {
 
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let (private_key, public_key) = cg.key_gen(&mut OsRng);
-  let public_key_table = public_key.table();
+  let public_key_table = public_key.small_table();
 
   let transcript = || RecommendedTranscript::new(b"Encryption Proof Test");
 
   let m = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
-  let (_randomness, ciphertext, proof) =
-    ZkEncryptionProof::<Secp256k1>::prove(&mut OsRng, &cg, &mut transcript(), &public_key, &m);
+  let (_randomness, ciphertext, proof) = ZkEncryptionProof::<Secp256k1>::prove(
+    &mut OsRng,
+    &cg,
+    &mut transcript(),
+    &public_key_table,
+    &m,
+  );
 
   let mut verifier = BatchVerifier::new();
   proof

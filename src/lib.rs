@@ -143,14 +143,14 @@ mod tests {
     }
     let delta = delta.unwrap();
     let public_key = public_key.unwrap();
-    let public_key_table = public_key.table();
+    let public_key_table = public_key.large_table();
 
     // TODO: Replace with a proven, decentralized flow
     let ec_key = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
     let k_ciphertext =
       cg.encrypt(&mut OsRng, &public_key, &BigUint::from_bytes_be(ec_key.to_repr().as_ref())).1;
-    let k_ciphertext_0 = k_ciphertext.0.table();
-    let k_ciphertext_1 = k_ciphertext.1.table();
+    let k_ciphertext_0 = k_ciphertext.0.large_table();
+    let k_ciphertext_1 = k_ciphertext.1.large_table();
     let ec_key = <Secp256k1 as Ciphersuite>::generator() * ec_key;
     dbg!("Shimmed key gen");
 
@@ -188,7 +188,7 @@ mod tests {
         &mut OsRng,
         &cg,
         &mut transcript(),
-        &public_key,
+        &public_key_table,
         &x_i,
       );
       println!(
@@ -272,8 +272,8 @@ mod tests {
     for x_i_ciphertext in &x_i_ciphertexts {
       x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext);
     }
-    let x_ciphertext_0 = x_ciphertext.0.table();
-    let x_ciphertext_1 = x_ciphertext.1.table();
+    let x_ciphertext_0 = x_ciphertext.0.small_table();
+    let x_ciphertext_1 = x_ciphertext.1.small_table();
     println!(
       "Calculated X: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
