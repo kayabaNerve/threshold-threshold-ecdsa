@@ -97,6 +97,9 @@ mod tests {
 
     use super::*;
 
+    const PARTICIPANTS: u16 = 4;
+    const THRESHOLD: u16 = 3;
+
     const LIMBS: usize = 256 / 64;
     let secp256k1_neg_one = -<Secp256k1 as Ciphersuite>::F::ONE;
     let mut secp256k1_mod = [0; LIMBS * 8];
@@ -108,47 +111,52 @@ mod tests {
     let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
     let transcript = || RecommendedTranscript::new(b"Protocol Test");
     let mut shares = HashMap::new();
-    for i in 1u16 ..= 4u16 {
+    for i in 1u16 ..= PARTICIPANTS {
       shares.insert(i, Natural::ZERO);
     }
     let mut delta = None;
     let mut public_key: Option<Element> = None;
     let mut verification_shares = HashMap::new();
-    for _ in 1u16 ..= 4u16 {
-      let iss = IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), 3, 4);
+    for participants_shared in 1u16 ..= PARTICIPANTS {
+      println!("Sharing for participant {participants_shared}");
+      let iss =
+        IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), THRESHOLD, PARTICIPANTS);
+      println!("Constructed ISS");
       if delta.is_none() {
         delta = Some(iss.delta.clone());
       }
+      let delta_square = iss.delta.clone().pow(2);
       assert_eq!(delta.as_ref(), Some(&iss.delta));
       let contribution = &iss.commitments[0].commitment;
+
+      let eval = |i| {
+        let mut scalars = vec![delta_square.clone()];
+        let mut points = vec![&iss.commitments[0].commitment];
+        for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
+          let C_i = C_i + 1;
+          let i = Natural::from(i);
+          scalars.push(i.pow(u64::try_from(C_i).unwrap()));
+          points.push(&C.commitment);
+        }
+        multiexp(&mut scalars, &points, &[])
+      };
       if let Some(public_key) = &mut public_key {
-        for i in 1u16 ..= 4u16 {
-          let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
-          for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
-            let C_i = C_i + 1;
-            let i = Natural::from(i);
-            eval = eval.add(&C.commitment.mul(&i.pow(u64::try_from(C_i).unwrap())));
-          }
+        for i in 1u16 ..= PARTICIPANTS {
           let existing: &mut Element = verification_shares.get_mut(&i).unwrap();
-          let new = existing.add(&eval);
+          let new = existing.add(&eval(i));
           *existing = new;
         }
         *public_key = public_key.add(contribution);
       } else {
-        for i in 1u16 ..= 4u16 {
-          let mut eval = iss.commitments[0].commitment.mul(&(&iss.delta * &iss.delta));
-          for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
-            let C_i = C_i + 1;
-            let i = Natural::from(i);
-            eval = eval.add(&C.commitment.mul(&i.pow(u64::try_from(C_i).unwrap())));
-          }
-          verification_shares.insert(i, eval);
+        for i in 1u16 ..= PARTICIPANTS {
+          verification_shares.insert(i, eval(i));
         }
         public_key = Some(contribution.clone());
       }
       for (i, share) in iss.shares {
         *shares.get_mut(&i).unwrap() += share;
       }
+      println!("Eval'd");
     }
     let delta = delta.unwrap();
     let public_key = public_key.unwrap();
@@ -190,7 +198,7 @@ mod tests {
     let mut xy_i_randomnesses = vec![];
     let mut commitments = vec![];
     let mut r1_proofs = vec![];
-    for _ in 0 .. 3 {
+    for _ in 0 .. THRESHOLD {
       let x_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
       x_is.push(x_i);
 
@@ -334,7 +342,7 @@ mod tests {
     let mut ky_i_ciphertexts = vec![];
     let mut xy_i_ciphertexts = vec![];
     let mut r2_proofs = vec![];
-    for i in 0 .. 3 {
+    for i in 0 .. usize::from(THRESHOLD) {
       let (y_i_uint, y_i_randomness, y_i_ciphertext) = y_i_full[i].clone();
       let (ky_i_randomness, ky_i_ciphertext) = ky_i_full[i].clone();
       let xy_i_randomness = xy_i_randomnesses[i].clone();
@@ -467,16 +475,16 @@ mod tests {
 
     // Publish the decryption shares for w and z
     // z can be decrypted in additional preprocess round if minimization of this round is desired
-    let set = [1, 2, 3];
+    let set: [u16; THRESHOLD as usize] = core::array::from_fn(|i| u16::try_from(i + 1).unwrap());
     let mut W_is = vec![];
     let mut Z_is = vec![];
     let mut r3_proofs = vec![];
-    for i in 1u16 ..= 3 {
+    for i in 1u16 ..= THRESHOLD {
       // Calculate the literal shares
       let share_to_use = &shares[&i] * &delta;
       // The lagrange can be post-calculated so that the first `t` to publish shares for a
       // completed signature may be used together
-      let lagrange = IntegerSecretSharing::lagrange(4, i, &set);
+      let lagrange = IntegerSecretSharing::lagrange(PARTICIPANTS, i, &set);
       let share_to_use = share_to_use * lagrange.clone().unsigned_abs();
 
       // If the lagrange (a publicly known coefficient) is negative, use the negative form of the
@@ -516,7 +524,7 @@ mod tests {
       let mut lagranged_shares = vec![];
       for i in 0 .. r3_proofs.len() {
         let i_u16 = u16::try_from(i + 1).unwrap();
-        let lagrange = IntegerSecretSharing::lagrange(4, i_u16, &set);
+        let lagrange = IntegerSecretSharing::lagrange(PARTICIPANTS, i_u16, &set);
         lagranged_shares.push(verification_shares[&i_u16].mul(&lagrange.clone().unsigned_abs()));
         lagranges.push(lagrange);
       }
@@ -524,7 +532,7 @@ mod tests {
       for (i, proof) in r3_proofs.iter().enumerate() {
         let lagrange = &lagranges[i];
         let share_max_size = Natural::ONE <<
-          (IntegerSecretSharing::share_size(&cg, 3, 4) +
+          (IntegerSecretSharing::share_size(&cg, THRESHOLD, PARTICIPANTS) +
             delta.significant_bits() +
             lagrange.significant_bits());
 

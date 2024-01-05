@@ -67,8 +67,9 @@ impl ZkDlogOutsideSubgroupProof {
     cg: &ClassGroup,
     transcript: &mut impl Transcript,
     x: &Natural,
-  ) -> Self {
-    Self::transcript_statement(transcript, &(cg.g_table() * x));
+  ) -> (Element, Self) {
+    let res = cg.g_table() * x;
+    Self::transcript_statement(transcript, &res);
 
     // k is intended to be sampled from [-B, B]. We reduce the space by half yet don't sample from
     // -B as we can't calculate negatives over a field of unknown order (which has implications
@@ -87,7 +88,7 @@ impl ZkDlogOutsideSubgroupProof {
     let (q, r) = (&s / &l, &s % &l);
     let Q = cg.g_table() * &q;
 
-    ZkDlogOutsideSubgroupProof { R, D, e, Q, r }
+    (res, ZkDlogOutsideSubgroupProof { R, D, e, Q, r })
   }
 
   #[allow(clippy::result_unit_err)]
@@ -498,7 +499,9 @@ fn dlog_without_subgroup() {
   let (private_key, public_key) = cg.key_gen(&mut OsRng);
   let transcript = || RecommendedTranscript::new(b"DLog Outside Subgroup Proof Test");
   let mut verifier = BatchVerifier::new();
-  let proof = ZkDlogOutsideSubgroupProof::prove(&mut OsRng, &cg, &mut transcript(), &private_key);
+  let (returned_public_key, proof) =
+    ZkDlogOutsideSubgroupProof::prove(&mut OsRng, &cg, &mut transcript(), &private_key);
+  assert_eq!(public_key, returned_public_key);
   proof.verify(&cg, &mut verifier, &mut transcript(), &public_key).unwrap();
   assert!(verifier.verify());
 }

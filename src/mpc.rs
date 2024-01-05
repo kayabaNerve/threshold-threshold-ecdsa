@@ -23,8 +23,7 @@ impl CommitmentWithProof {
     transcript: &mut impl Transcript,
     dlog: &Natural,
   ) -> Self {
-    let commitment = cg.g_table() * dlog;
-    let proof = ZkDlogOutsideSubgroupProof::prove(rng, cg, transcript, dlog);
+    let (commitment, proof) = ZkDlogOutsideSubgroupProof::prove(rng, cg, transcript, dlog);
     Self { commitment, proof }
   }
   #[allow(clippy::result_unit_err)]
@@ -46,11 +45,7 @@ pub struct IntegerSecretSharing {
 }
 impl IntegerSecretSharing {
   fn delta(n: u16) -> Natural {
-    let mut accum = Natural::ONE;
-    for i in 2 ..= n {
-      accum *= Natural::from(i);
-    }
-    accum
+    Natural::factorial(n.into())
   }
 
   pub(crate) fn share_size(cg: &ClassGroup, t: u16, n: u16) -> u64 {
@@ -80,9 +75,9 @@ impl IntegerSecretSharing {
     // For the coefficient, the security proof requires the size be l + log2(hmax * t) + 1.
     // This is interpreted as ceil(log2(Dq)) + log2(2 * delta * t) + 1.
     // TODO: Double check this.
+    let secret_bits =
+      cg.p().significant_bits() + (&delta * Natural::from(t)).significant_bits() + 2;
     let mut gen_coefficient = || {
-      let secret_bits =
-        cg.p().significant_bits() + (&delta * Natural::from(t)).significant_bits() + 2;
       let mut secret = vec![0; secret_bits.div_ceil(8).try_into().unwrap()];
       rng.fill_bytes(&mut secret);
       secret[0] &= 0xff >> (8 - (secret_bits % 8));
@@ -117,12 +112,14 @@ impl IntegerSecretSharing {
     }
 
     #[cfg(debug_assertions)]
+    let delta_squared = delta.clone().pow(2);
+    #[cfg(debug_assertions)]
     for (i, y) in &y {
-      let mut eval = commitments[0].commitment.mul(&(&delta * &delta));
+      let i = Natural::from(*i);
+      let mut eval = commitments[0].commitment.mul(&delta_squared);
       for (C_i, C) in commitments[1 ..].iter().enumerate() {
         let C_i = C_i + 1;
-        let i = Natural::from(*i);
-        eval = eval.add(&C.commitment.mul(&i.pow(u64::try_from(C_i).unwrap())));
+        eval = eval.add(&C.commitment.mul(&i.clone().pow(u64::try_from(C_i).unwrap())));
       }
       debug_assert_eq!(cg.g_table() * &(y * &delta), eval);
     }
