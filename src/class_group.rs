@@ -657,19 +657,19 @@ impl ClassGroup {
 
   pub fn encrypt_with_randomness(
     &self,
-    key: &Element,
+    key: &Table,
     randomness: &Natural,
     message: &Natural,
   ) -> Ciphertext {
     let c1 = &self.g_table * randomness;
-    let c2 = multiexp(&mut [randomness.clone(), message.clone()], &[&key], &[&self.f_table]);
+    let c2 = multiexp(&mut [randomness.clone(), message.clone()], &[], &[key, &self.f_table]);
     Ciphertext(c1, c2)
   }
 
   pub fn encrypt(
     &self,
     rng: &mut (impl RngCore + CryptoRng),
-    key: &Element,
+    key: &Table,
     m: &Natural,
   ) -> (Natural, Ciphertext) {
     let r = self.sample_secret(rng);
@@ -696,7 +696,7 @@ impl ClassGroup {
   pub fn add(
     &self,
     rng: &mut (impl RngCore + CryptoRng),
-    public_key: &Element,
+    public_key: &Table,
     ciphertext: &Ciphertext,
     other: &Ciphertext,
   ) -> Ciphertext {
@@ -705,14 +705,14 @@ impl ClassGroup {
     let r = self.sample_secret(rng);
 
     res.0 = res.0.add(&(&self.g_table * &r));
-    res.1 = res.1.add(&public_key.mul(&r));
+    res.1 = res.1.add(&(public_key * &r));
     res
   }
 
   pub fn mul(
     &self,
     rng: &mut (impl RngCore + CryptoRng),
-    public_key: &Element,
+    public_key: &Table,
     ciphertext: &Ciphertext,
     scalar: &Natural,
   ) -> (Natural, Ciphertext) {
@@ -721,7 +721,7 @@ impl ClassGroup {
     let r = self.sample_secret(rng);
 
     res.0 = res.0.add(&(&self.g_table * &r));
-    res.1 = res.1.add(&public_key.mul(&r));
+    res.1 = res.1.add(&(public_key * &r));
     (r, res)
   }
 }
@@ -915,6 +915,7 @@ fn class_group() {
 
   let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
   let (private_key, public_key) = cg.key_gen(&mut OsRng);
+  let public_key = public_key.small_table();
 
   let mut m1 = vec![0; 31];
   OsRng.fill_bytes(&mut m1);

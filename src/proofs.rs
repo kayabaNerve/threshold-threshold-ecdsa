@@ -208,7 +208,7 @@ impl<C: Ciphersuite> ZkEncryptionProof<C> {
     for (i, bit) in scalar.to_le_bits().into_iter().enumerate() {
       scalar_uint += Natural::from(u8::from(bit)) << i;
     }
-    let ciphertext = cg.encrypt_with_randomness(&public_key_table[0], &randomness, &scalar_uint);
+    let ciphertext = cg.encrypt_with_randomness(public_key_table, &randomness, &scalar_uint);
 
     Self::transcript_statement(transcript, public_key_table, &ciphertext, C::generator() * *scalar);
 

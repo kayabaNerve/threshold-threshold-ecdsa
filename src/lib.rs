@@ -167,7 +167,7 @@ mod tests {
     let k_ciphertext = cg
       .encrypt(
         &mut OsRng,
-        &public_key,
+        &public_key_table,
         &Natural::from_digits_desc(&256, ec_key.to_repr().into_iter().map(u16::from)).unwrap(),
       )
       .1;
@@ -224,7 +224,7 @@ mod tests {
       let y_i_uint =
         Natural::from_digits_desc(&256, y_i.to_repr().into_iter().map(u16::from)).unwrap();
 
-      let (y_i_randomness, y_i_ciphertext) = cg.encrypt(&mut OsRng, &public_key, &y_i_uint);
+      let (y_i_randomness, y_i_ciphertext) = cg.encrypt(&mut OsRng, &public_key_table, &y_i_uint);
       println!(
         "Encrypted Y_i: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
