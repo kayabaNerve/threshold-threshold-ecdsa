@@ -264,35 +264,12 @@ mod tests {
     }
 
     // Round 2
-
-    {
-      let mut verifier = BatchVerifier::new();
-      for (i, proof) in r1_proofs.iter().enumerate() {
-        proof
-          .verify(
-            &cg,
-            &mut verifier,
-            &mut transcript(),
-            &public_key_table,
-            &x_i_ciphertexts[i],
-            X_is[i],
-          )
-          .unwrap();
-      }
-      assert!(verifier.verify());
-      println!(
-        "Verified X_is: {}",
-        std::time::Instant::now().duration_since(segment_time).as_millis()
-      );
-      segment_time = std::time::Instant::now();
-    }
-
-    let X = X_is.into_iter().sum::<<Secp256k1 as Ciphersuite>::G>();
+    let X = X_is.iter().sum::<<Secp256k1 as Ciphersuite>::G>();
     let r = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
 
     // Everyone now calculates the sum nonce
-    let mut x_ciphertext = x_i_ciphertexts.pop().unwrap();
-    for x_i_ciphertext in &x_i_ciphertexts {
+    let mut x_ciphertext = x_i_ciphertexts[0].clone();
+    for x_i_ciphertext in &x_i_ciphertexts[1 ..] {
       x_ciphertext = x_ciphertext.add_without_randomness(x_i_ciphertext);
     }
     let x_ciphertext_0 = x_ciphertext.0.small_table();
@@ -390,6 +367,18 @@ mod tests {
 
     {
       let mut verifier = BatchVerifier::new();
+      for (i, proof) in r1_proofs.iter().enumerate() {
+        proof
+          .verify(
+            &cg,
+            &mut verifier,
+            &mut transcript(),
+            &public_key_table,
+            &x_i_ciphertexts[i],
+            X_is[i],
+          )
+          .unwrap();
+      }
       for (i, proof) in r2_proofs.iter().enumerate() {
         #[rustfmt::skip]
         proof
@@ -416,7 +405,7 @@ mod tests {
       }
       assert!(verifier.verify());
       println!(
-        "Verified y_i xy_i ky_i ciphertexts: {}",
+        "Verified X_is, y_i xy_i ky_i ciphertexts: {}",
         std::time::Instant::now().duration_since(segment_time).as_millis(),
       );
       segment_time = std::time::Instant::now();
