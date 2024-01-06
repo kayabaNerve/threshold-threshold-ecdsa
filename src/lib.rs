@@ -110,57 +110,48 @@ mod tests {
 
     let cg = ClassGroup::setup(&mut OsRng, secp256k1_mod.clone());
     let transcript = || RecommendedTranscript::new(b"Protocol Test");
+
+    let mut iss_s = vec![];
+    let mut delta = None;
+    let mut public_key = cg.identity().clone();
+    for p in 1u16 ..= PARTICIPANTS {
+      println!("Sharing for participant {p}");
+      let iss =
+        IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), THRESHOLD, PARTICIPANTS);
+      if delta.is_none() {
+        delta = Some(iss.delta.clone());
+      }
+      assert_eq!(delta.as_ref(), Some(&iss.delta));
+      public_key = public_key.add(&iss.commitments[0].commitment);
+
+      iss_s.push(iss);
+    }
+    let delta = delta.unwrap();
+    let delta_square = delta.clone().pow(2);
+    let public_key_table = public_key.large_table();
+
     let mut shares = HashMap::new();
     for i in 1u16 ..= PARTICIPANTS {
       shares.insert(i, Natural::ZERO);
     }
-    let mut delta = None;
-    let mut public_key: Option<Element> = None;
     let mut verification_shares = HashMap::new();
-    for participants_shared in 1u16 ..= PARTICIPANTS {
-      println!("Sharing for participant {participants_shared}");
-      let iss =
-        IntegerSecretSharing::new(&mut OsRng, &cg, &mut transcript(), THRESHOLD, PARTICIPANTS);
-      println!("Constructed ISS");
-      if delta.is_none() {
-        delta = Some(iss.delta.clone());
-      }
-      let delta_square = iss.delta.clone().pow(2);
-      assert_eq!(delta.as_ref(), Some(&iss.delta));
-      let contribution = &iss.commitments[0].commitment;
+    for p in 1u16 ..= PARTICIPANTS {
+      println!("Accumulating shares for {p}");
+      let mut scalars = vec![];
+      let mut points = vec![];
+      for sender in 1u16 ..= PARTICIPANTS {
+        *shares.get_mut(&p).unwrap() += &iss_s[usize::from(sender - 1)].shares[&p];
 
-      let eval = |i| {
-        let mut scalars = vec![delta_square.clone()];
-        let mut points = vec![&iss.commitments[0].commitment];
-        for (C_i, C) in iss.commitments[1 ..].iter().enumerate() {
+        scalars.push(delta_square.clone());
+        points.push(&iss_s[usize::from(sender - 1)].commitments[0].commitment);
+        for (C_i, C) in iss_s[usize::from(sender - 1)].commitments[1 ..].iter().enumerate() {
           let C_i = C_i + 1;
-          let i = Natural::from(i);
-          scalars.push(i.pow(u64::try_from(C_i).unwrap()));
+          scalars.push(Natural::from(p).pow(u64::try_from(C_i).unwrap()));
           points.push(&C.commitment);
         }
-        multiexp(&mut scalars, &points, &[])
-      };
-      if let Some(public_key) = &mut public_key {
-        for i in 1u16 ..= PARTICIPANTS {
-          let existing: &mut Element = verification_shares.get_mut(&i).unwrap();
-          let new = existing.add(&eval(i));
-          *existing = new;
-        }
-        *public_key = public_key.add(contribution);
-      } else {
-        for i in 1u16 ..= PARTICIPANTS {
-          verification_shares.insert(i, eval(i));
-        }
-        public_key = Some(contribution.clone());
       }
-      for (i, share) in iss.shares {
-        *shares.get_mut(&i).unwrap() += share;
-      }
-      println!("Eval'd");
+      verification_shares.insert(p, multiexp(&mut scalars, &points, &[]));
     }
-    let delta = delta.unwrap();
-    let public_key = public_key.unwrap();
-    let public_key_table = public_key.large_table();
 
     // TODO: Replace with a proven, decentralized flow
     let ec_key = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
