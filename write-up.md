@@ -11,8 +11,8 @@ wrong. It runs in variable time.
 
 The protocol relies on class groups to offer homormorphic encryption which offer
 a trustless setup which is error-free (not requiring re-attempts, such as
-  protocols which randomly generate numbers until achieiving sums which are
-  prime).
+protocols which randomly generate numbers until achieiving sums which are
+prime).
 
 ### Proofs
 
@@ -20,10 +20,10 @@ Three ZK proofs are needed.
 
 1) A DLog PoK.
 2) A proof an elliptic point's discrete log is encrypted as the message within a
-ciphertext.
+   ciphertext.
 3) A general relations proof proving that for a matrix of elements and a row of
-secrets, an output row of elements is the result of a multiexp of each row of
-elements by the row of secrets.
+   secrets, an output row of elements is the result of a multiexp of each row of
+   elements by the row of secrets.
 
 The first proof immediately resolves to the third for a matrix of `[[G]]`. The
 second proof is likely a trivial extension over the third proof. If preferable,
