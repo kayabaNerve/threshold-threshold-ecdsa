@@ -44,6 +44,9 @@ parameters. In order to satisfy the strong root assumption,
 proposed a distinct mechanism. Accordingly, it is preferred (though not required
 and not currently implemented into threshold-threshold-ecdsa).
 
+Generators should be chosen via one of the methods in
+https://eprint.iacr.org/2024/034, which offers a hash to class group element.
+
 Participants additionally run the integer secret sharing system from
 https://eprint.iacr.org/2022/1437, which also provides a general relations proof
 satisfying the above definition. The most expensive part of this is the `t` DLog
