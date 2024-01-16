@@ -295,11 +295,7 @@ mod tests {
       [cg.g_table().into(),        ElementOrTable::Identity,       ElementOrTable::Identity,   ElementOrTable::Identity],
       [(&public_key_table).into(), ElementOrTable::Identity,       ElementOrTable::Identity,   cg.f_table().into()],
 
-      // TODO: Does this break the ZK properties? You can subtract the commitment to the
-      // xy_i_randomness (since it uses an existing generator) and have just the scaled x
-      // randomness
-      // While it *shouldn't* be feasible to calculate the DLog for that, it's at least
-      // suboptimal?
+      // TODO: The commitments almost certainly MUST be over a distinct generator
       [ElementOrTable::Identity,       cg.g_table().into(),        ElementOrTable::Identity,   ElementOrTable::Identity],
       [ElementOrTable::Identity,       cg.g_table().into(),        ElementOrTable::Identity,   (&x_ciphertext_0).into()],
       [ElementOrTable::Identity,       (&public_key_table).into(), ElementOrTable::Identity,   (&x_ciphertext_1).into()],

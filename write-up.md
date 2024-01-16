@@ -88,11 +88,15 @@ shares, the literal inclusion of is ignored here.
 
 Concurrent security may not be present in the above protocol if it's possible to
 apply Wagner's algorithm to find a list of ciphertexts whose randomnesses sum to
-equal to a targeted ciphertext. This would allow decrypting a private key or
-nonce, leaking the private key. By deciding on the message before the protocol
+equal to a targeted ciphertext. I don't believe this currently possible, as I
+believe it'd break the discrete log problem/accordingly devolve into Pollard's
+rho algorithm. If possible, this would allow decrypting a private key or nonce,
+leaking the private key. Further security can be offered by making this
+non-robust and non-concurrent by deciding on the message before the protocol
 starts, and committing to `y_i_ciphertext`, `ky_i_ciphertext`, and the
-randomness which will be used in `xy_i_ciphertext` in round 1, concurrent
-security is assumed.
+randomness which will be used in `xy_i_ciphertext` in round 1. Please note all
+commitments almost certainly must be to a distinct generator to prevent their
+isolation as a component.
 
 threshold-threshold-ecdsa implements the above signing protocol, with the
 commitment to the randomness, and achieves 67-of-100 signing in less than 3s per
