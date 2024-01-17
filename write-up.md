@@ -26,8 +26,8 @@ however.
 https://eprint.iacr.org/2021/205 provides candidates for `DLOG` and `ECC-CT`,
 yet not explicitly `RELATIONS`. Their other proofs seem to be already-specified
 instantiations of a `RELATIONS` proof they didn't include. With `RELATIONS`
-being reconstituted, the only assumption introduced is their "Root Assumption",
-which they compare to the "RSA Assumption".
+being reconstituted, the only assumption introduced is their
+"Adaptive Root Assumption", which they compare to the "RSA Assumption".
 
 https://eprint.iacr.org/2022/1437 provides a candidate for `RELATIONS`. It
 doesn't offer a proof of knowledge and relies on the "Rough Order Assumption",
@@ -115,12 +115,12 @@ This section attempts to comment on the security of the composition provided
 This protocol fundamentally relies on [CL15](https://eprint.iacr.org/2015/047)
 standing. Additionally, it requires the proofs used be valid.
 
-So far, I've most preferred the "Root Assumption" over the
+So far, I've most preferred the "Adaptive Root Assumption" over the
 "Strong Root Assumption" or "Rough Order Assumption". The
 "Rough Order Assumption" assumes statistical properties of unknown orders and no
 proofs relying it serve as proofs of knowledge. The "Strong Root Assumption"
-assumes more than the "Root Assumption" while simultaneously having less
-efficient proofs (due to requiring repetition).
+relies on more than the "Adaptive Root Assumption" while simultaneously having
+less efficient proofs (due to requiring repetition).
 
 - The security of the ECC nonces.
 
