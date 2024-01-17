@@ -109,10 +109,18 @@ here.
 
 ### Practical Comments on Security
 
+This section attempts to comment on the security of the composition provided
+*in an informal, practical manner*.
+
 This protocol fundamentally relies on [CL15](https://eprint.iacr.org/2015/047)
-standing. Additionally, it requires the proofs used be valid. This section
-attempts to comment on the security of the composition provided *in an informal,
-practical manner*.
+standing. Additionally, it requires the proofs used be valid.
+
+So far, I've most preferred the "Root Assumption" over the
+"Strong Root Assumption" or "Rough Order Assumption". The
+"Rough Order Assumption" assumes statistical properties of unknown orders and no
+proofs relying it serve as proofs of knowledge. The "Strong Root Assumption"
+assumes more than the "Root Assumption" while simultaneously having less
+efficient proofs (due to requiring repetition).
 
 - The security of the ECC nonces.
 
