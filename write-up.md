@@ -11,27 +11,27 @@ achieving sums which are prime).
 
 Three ZK proofs, which additionally prove knowledge of the witness, are needed.
 
-1) DLog (`DLOG`).
-2) A proof an elliptic point's discrete log is encrypted as the message within a
+1) Discrete log (`DLOG`).
+2) Discrete-log Equality (`DLEQ`).
+3) A proof an elliptic point's discrete log is encrypted as the message within a
    well-formed ciphertext (`ECC-CT`).
-3) A general relations proof proving that for a matrix of elements and a row of
-   secrets, an output row of elements is the result of a multiexp of each row
-   row of elements by the row of secrets (`RELATIONS`).
 
-The first proof immediately resolves to the third for a matrix of `[[G]]`. The
-second proof is likely a trivial extension over the third proof. If preferable,
-more specific proofs (with better performance or better assumptions) may be used
-however.
+We additionally discuss a proof `RELATIONS`, which proves for a matrix of
+elements and a row of secrets, an output column of elements is the result of a
+multiexp of each row of elements by the row of secrets. Such a proof naturally
+offers `DLOG` and `DLEQ`, with `ECC-CT` likely being a trivial extension over
+it.
 
 https://eprint.iacr.org/2021/205 provides candidates for `DLOG` and `ECC-CT`,
-yet not explicitly `RELATIONS`. Their other proofs seem to be already-specified
+yet not `DLEQ`. Their provided proofs seem to be already-specified
 instantiations of a `RELATIONS` proof they didn't include. With `RELATIONS`
-being reconstituted, the only assumption introduced is their
-"Adaptive Root Assumption", which they compare to the "RSA Assumption".
+being reconstituted and used to derive `DLEQ`, all proofs are satisfied. The
+only assumption introduced is their "Adaptive Root Assumption", which they
+compare to the "RSA Assumption".
 
-https://eprint.iacr.org/2022/1437 provides a candidate for `RELATIONS`. It
-doesn't offer a proof of knowledge and relies on the "Rough Order Assumption",
-which isn't preferred.
+https://eprint.iacr.org/2022/1437 provides a candidate for `RELATIONS`. Their
+proof doesn't offer a proof of knowledge and relies on the
+"Rough Order Assumption", which isn't preferred.
 
 ### DKG
 
@@ -81,29 +81,29 @@ here.
 
 2) A set of size equal to `t` perform the following steps.
 
-  1) Verify the prior proofs.
+    1) Verify the prior proofs.
 
-  2) Calculate the binding factor by hashing:
-    - The group key
-    - The message
-    - Every contribution to the nonce, both the ECC points and ciphertexts
-      *with who contributed it*
+    2) Calculate the binding factor by hashing:
+       - The group key
+       - The message
+       - Every contribution to the nonce, both the ECC points and ciphertexts
+         *with who contributed it*
 
-  3) For `D_i`, `E_i`, sum them to `*_point` and the ciphertexts for their discrete
-     logarithm to `*_ciphertext`;
+    3) For `D_i`, `E_i`, sum them to `*_point` and the ciphertexts for their
+       discrete logarithm to `*_ciphertext`;
 
-  4) Set
-     `S = (D_ciphertext + (binding * E_ciphertext)) + (challenge * K_ciphertext)`.
+    4) Set
+       `S = (D_ciphertext + (binding * E_ciphertext)) + (challenge * K_ciphertext)`.
 
-  5) Set the decryption share for `S` to be `private_key_share * S.0` (the local
-     participant's share of the threshold decryption key multiplied by the
-     ciphertext's randomness commitment).
+    5) Set the decryption share for `S` to be `private_key_share * S.0` (the local
+       participant's share of the threshold decryption key multiplied by the
+       ciphertext's randomness commitment).
 
-  6) Broadcast `S` with a `RELATIONS` proof for `[[G], [S.0]]`,
-     `[verification_key, decryption_share]` (proving the well-formedness of the
-     share).
+    6) Broadcast `S` with a `DLEQ` proof for
+       `verification_key, decryption_share` over `G, S.0` (proving the
+       well-formedness of the share).
 
-4) Sum the decryption shares for `S` and attempt decryption. If `R, s` is a
+3) Sum the decryption shares for `S` and attempt decryption. If `R, s` is a
    valid signature, the protocol completes. Otherwise, the decryption shares'
    proofs are verified to discover which is faulty.
 
@@ -145,6 +145,26 @@ While the randomness is presumably able to be biased, it has the same binding
 factor process FROST itself had.  The question becomes can the outputs of two
 biased DKGs, one weighted by a binding factor, summed, cause problems. The
 presumption is not. If it can, a new nonce process would be needed.
+
+In order to avoid bias in the decryption, the following may be possible.
+
+1) Hash the binding factor to an element `B`.
+2) Set `decryption_share` to `(S.0 + B) * private_key_share`,
+   `B_share` to `B * private_key_share * H(binding_factor)`.
+3) Modify `S.1` to `(S.1 * H(binding_factor)) + sum(B_share)`.
+4) Perform decryption via solving for `S.1 - sum(decryption_share)`, then
+   multiplying the result via the inverse of `H(binding_factor)` modulo `p`.
+
+`decryption_share` cannot be converted to the decryption share for the original
+`S` as it'd require subtracting `B * private_key_share`, an unknown value. While
+it can be calculated by `B_share * H(binding_factor).invert()`, the inverse is
+presumed infeasible to calculate due to the group being of unknown order (and
+may require the hash function be a hash to prime). Then the sole question is if
+the inclusion of uniform points do successfully erase bias.
+
+This commentary on bias is likely overengineered, yet besides the security of
+the class group construction itself, is my biggest concern. Accordingly, I'd
+like to be thorough.
 
 - A nonce could be reused.
 
