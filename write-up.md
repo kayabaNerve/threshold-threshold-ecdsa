@@ -2,128 +2,201 @@
 
 Implemented at https://github.com/kayabaNerve/threshold-threshold-ecdsa.
 
-That implementation probably isn't secure. It probably has a constant or two
-wrong. It runs in variable time.
+## Background
 
-... but I don't believe it's fundamentally broken.
+The protocol relies on [CL15](ttps://eprint.iacr.org/2015/047)'s homormorphic
+encryption scheme constructed via class groups of unknown order. In a brief
+summary, class groups of unknown order can be created with a subgroup where the
+discrete log problem is easy (hereafter solely referred to as the subgroup).
 
-## The Protocol
+This leads to ElGamal-esque ciphertexts of the form `rG, rK + mH`, where:
 
-The protocol relies on class groups to offer homormorphic encryption which offer
-a trustless setup which is error-free (not requiring re-attempts, such as
-protocols which randomly generate numbers until achieiving sums which are
-prime).
+- `r` is the ciphertext randomness
+- `G` is a generator of the class order
+- `K` is the public key
+- `m` is the message
+- `H` is the generator for the subgroup
+
+Decryption is via multiplying `rG` by the private key, subtracting the result
+from the second element, and solving for the discrete logarithm.
+
+The two notable attributes about this scheme are:
+
+1) The message space is configurable to any prime number.
+
+   This removes the need for any range proofs over the message, if properly
+   configured to a curve's scalar field (and used for scalars).
+
+2) The class group, and keys for it, can be constructed feasibly and
+   trustlessly.
+
+   The class group construction can be done in a linear fashion with a constant
+   amount of time. Keys can be created using a secret sharing scheme. Neither
+   require secret primes and neither have an error rate (where the protocol may
+   fail even with honest participants).
 
 ### Proofs
 
 Three ZK proofs are needed.
 
-1) A DLog PoK.
-2) A proof an elliptic point's discrete log is encrypted as the message within a
-   ciphertext.
-3) A general relations proof proving that for a matrix of elements and a row of
-   secrets, an output row of elements is the result of a multiexp of each row of
-   elements by the row of secrets.
+1) `DLOG(x, G, A)`
+    - `x`: An integer
+    - `G`: A generator of the class group
+    - `A`: An element
 
-The first proof immediately resolves to the third for a matrix of `[[G]]`. The
+    Prove knowledge of `x` and for the relation `A = xG`.
+
+2) `ECC-CT(r, x, E, G, H, K, P, R, M)`
+    - `r`: An integer
+    - `x`: A scalar for the order of the subgroup
+    - `E`: A generator of an elliptic curve whose order is equivalent to the
+           order of the subgroup
+    - `G`: A generator of the class group
+    - `H`: The generator of the subgroup
+    - `K`: An element of the class group
+    - `P`: A point on the elliptic curve
+    - `R, M`: Elements of the class group
+
+    Prove knowledge of `r`, `x` and for the relations
+    `P = xE, R = rG, M = rK + xH`.
+
+    This proves that the ciphertext is a valid encryption of the point's
+    discrete logarithm to the specified public key.
+
+3) `RELATIONS(G, s, O)`
+    - `G`: A matrix of elements of size `m * n`.
+    - `s`: A row of integers of length `n`.
+    - `O`: A column of elements of length `m`.
+
+    Prove knowledge of `s` and for the relations
+    `O_i = sum(G[i] * s) for i in 0 .. m`.
+
+The first proof immediately resolves to the third with a matrix of `[[G]]`. The
 second proof is likely a trivial extension over the third proof. If preferable,
 more specific proofs (with better performance or better assumptions) may be used
 however.
 
-https://eprint.iacr.org/2021/205 provides the first two proofs, yet not
-explicitly the third proof (though one is realizable). Its proofs rely on a
-weaker assumption and are generally preferred.
+https://eprint.iacr.org/2021/205 provides candidates for `DLOG` and `ECC-CT`.
+Their provided proofs seem to be already-specified instantiations of a
+`RELATIONS` proof they didn't include. With `RELATIONS` being reconstituted,
+all proofs are satisfied. The only assumption introduced is their
+"Adaptive Root Assumption", which they compare to the "RSA Assumption".
 
-### DKG
+https://eprint.iacr.org/2022/1437 provides a candidate for `RELATIONS`. Their
+proof doesn't offer a proof of knowledge and relies on the
+"Rough Order Assumption", which isn't preferred.
 
-The class group needs construction. The
-[original 2015 paper](https://eprint.iacr.org/2015/047) on a homomorphic
-encryption scheme over class groups does describe generation with solely public
-parameters. In order to satisfy the strong root assumption,
+## Setup
+
+### Class Group
+
+The class group requires construction. The
+[original 2015 paper](https://eprint.iacr.org/2015/047) does describe generation
+with solely public parameters.
+
 [Bandwidth-threshold threshold EC-DSA](https://eprint.iacr.org/2020/084)
-proposed a distinct mechanism. Accordingly, it is preferred (though not required
-and not currently implemented into threshold-threshold-ecdsa).
+proposed a distinct mechanism, explicitly in a MPC context, which provides a
+uniformly distributed generator (as needed for the "Strong Root Assumption").
 
-Generators should be chosen via one of the methods in
-https://eprint.iacr.org/2024/034, which offers a hash to class group element.
+While the latter's MPC-aware construction is preferred,
+https://eprint.iacr.org/2024/034 non-interactively offers uniformly distributed
+generators and should be used for generators as needed.
 
-Participants additionally run the integer secret sharing system from
-https://eprint.iacr.org/2022/1437, which also provides a general relations proof
-satisfying the above definition. The most expensive part of this is the `t` DLog
-proofs. Ideally, a two-round protocol which only uses a single proof for either
-the first commitment (as per PedPoP) or a single proof for all commitments
-(MuSig-aggregated) is instead used.
+threshold-threshold-ecdsa currently solely has the original class group
+construction from the 2015 paper.
 
-Finally, a ciphertext (encrypted to the group's threshold key, as all
-ciphertexts here are) for the private key is created. This can be done by
-participants publishing `K_i`, an ECC point, with a ciphertext encrypting its
-discrete log (with the relevant proof). The group's key is `sum(K_i)` with the
-ciphertext similarly defined.
+### Threshold Encryption Key
 
-### Signing
+Participants run the integer secret sharing system from
+https://eprint.iacr.org/2022/1437. The most expensive part of this is the `t`
+`DLOG` proofs. Ideally, a two-round protocol which only uses a single proof for
+either the first commitment (as per PedPoP) or a single proof for all
+commitments (MuSig-aggregated) is instead used.
 
-Signing is described as a 3-round protocol either without concurrent security or
-without preprocessing, with identifiable aborts. This can be performed by a
-threshold of participants using lagrange interpolation on their decryption
-shares, the literal inclusion of is ignored here.
+This yields a threshold encryption key `K` with each participant having a
+interpolatable share `k_i` and verification share `K_i`.
 
-1) All participants provide `X_i`, an ECC point, and a ciphertext for its
-   discrete log with the relevant proof.
+Decryption of a ciphertext is performed by acquiring `t` decryption shares
+(each `k_i * rG`) and interpolating them, using the result in place of `krG`
+within the standard decryption process.
 
-2) Verify the prior proof. All participants provide a ciphertext for `y_i`,
-   along with the ciphertexts for `x_ciphertext` (sum `x_i_ciphertexts`) and
-   `k_ciphertext` scaled by `y_i`. The relations proof is used to demonstrate
-   consistency.
+### Elliptic Curve Key
 
-3) Verify the prior proof. Set `y = sum(y_i_ciphertexts)`,
-   `z = xy_i_ciphertexts`, `d = ky_i_ciphertexts`. Set `dr` as `d` scaled by the
-   x coordinate of `X` (reduced into the scalar field). Set `my` as `y` scaled
-   by the message (hashed into the scalar field). Set `w = my + dr`. All
-   participants publish `w` and `z` scaled by their key shares (the decryption
-   shares) with a relations proof proving consistency.
+All participants randomly sample `r, x`. `P_i = xE, R_i = rG, M_i = rK + xH`.
 
-4) Sum the decryption shares for `w` and attempt decryption. Do the same for
-   `z`. If `w / z` is a valid signature, the protocol completes. Otherwise, the
-   decryption shares' proofs are verified to discover which is faulty.
+The key the group signs for is `P = sum(P_i)`. The ciphertext for `P`'s discrete
+logarithm is `P_ciphertext = (sum(R_i), sum(M_i))`.
 
-Concurrent security may not be present in the above protocol if it's possible to
-apply Wagner's algorithm to find a list of ciphertexts whose randomnesses sum to
-equal to a targeted ciphertext. I don't believe this currently possible, as I
-believe it'd break the discrete log problem/accordingly devolve into Pollard's
-rho algorithm. If possible, this would allow decrypting a private key or nonce,
-leaking the private key. Further security can be offered by making this
-non-robust and non-concurrent by deciding on the message before the protocol
-starts, and committing to `y_i_ciphertext`, `ky_i_ciphertext`, and the
-randomness which will be used in `xy_i_ciphertext` in round 1. Please note all
-commitments almost certainly must be to a distinct generator to prevent their
-isolation as a component.
+## Signing
 
-threshold-threshold-ecdsa implements the above signing protocol, with the
-commitment to the randomness, and achieves 67-of-100 signing in less than 3s per
-party (2GHz 12th Gen Intel, single thread).
+Signing is described as a robust 3-round protocol with identifiable aborts.
+Preprocessing of the first two rounds, or pipelining of the first round, may be
+feasible (with caveats) yet this isn't discussed here at this time.
 
-### Future Work
+1) A set of size at least equal to `t` perform the following steps.
+
+    1) Sample `r_x, x`.
+    2) `X_i = xE, R_x_i = r_x G, M_x_i = r_x K + xH`.
+    3) Publish `X_i, (R_x_i, M_x_i)` and the `ECC-CT` proof needed to prove
+       knowledge, validity, and consistency.
+
+2) A set of size at least equal to `t` perform the following steps once the
+   prior round is honestly completed (honesty determined by the proof(s)
+   successfully verifying).
+
+    1) `X = sum(X), X_ciphertext = (sum(R_x_i), sum(M_x_i))`.
+    2) Sample `r_y, y, r_yx, r_yp`.
+    3) `Y_i_ciphertext = (r_y G, r_y K + yH)`.
+    4) `yX_i_ciphertext = (y X_ciphertext.0 + r_yx G, y X_ciphertext.1 + r_yx K)`
+    5) `yP_i_ciphertext = (y P_ciphertext.0 + r_yp G, y P_ciphertext.1 + r_yp K)`
+    6) Publish `Y_i_ciphertext, yX_i_ciphertext, yP_i_ciphertext`, and a
+       `RELATIONS` proof for all the ciphertexts, proving their validity and
+       consistency (where all sampled secrets are the row of secrets).
+
+3) A set of size at least equal to `t` perform the following steps once the
+   prior round is honestly completed (honesty determined by the proof(s)
+   successfully verifying).
+
+    1) `Y = sum(Y_i_ciphertext), Z = sum(yX_i_ciphertext), D = sum(yP_i_ciphertext)`.
+    2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
+    3) `mY = message * Y, rD = r * D, W = mY + rD`.
+    4) Publish `k_i Z.0`, `k_i W.0`, the decryption shares for `Z` and `W`,
+       with a pair of proofs proving their well-formedness. Specifically,
+       `DLEQ(k_i, G, Z.0, K_i, Z_decryption_share)` and
+       `DLEQ(k_i, G, W.0, K_i, W_decryption_share)`.
+
+4) Once `t` parties have published valid decryption shares (as determined by the
+   proofs verifying successfully), they can be interpolated for anyone to
+   perform decryption of `Z` and `W`. The resulting values, `z` and `w`, form a
+   valid ECDSA signature of `(r, w / z)`.
+
+threshold-threshold-ecdsa implements the above signing protocol (with an
+additional commitment, sacrificing robustness for a notion of additional
+security) and achieves 67-of-100 signing in less than 3s per party
+(2GHz 12th Gen Intel, single thread).
+
+## Future Work
 
 Obviously, the above composition needs its security formalized and proven. It is
-no way claimed to be currently secure.
+in no way claimed to be currently secure.
+
+I would not be surprised if it ends up needing a commitment, sacrificing
+robustness, or if it needs a binomial nonce like FROST. It does have the
+advantage of never transmitting/revealing any scalars, solely points/elements,
+until the final signature is revealed. Ideally, that ensures all of this is ZK
+and helps ensure unforgeability of signatures.
 
 The library itself needs to be moved from being a proof of concept to a proper
 production library. With this needs to be compensation for the fact it's
 variable time (sufficient masking and/or moving proving to constant time) and
-auditing. Ideally, the relations proof is moved to the best possible assumption
-available (likely the adaptive root assumption).
+auditing. The currently implemented `RELATIONS` proof must also be corrected
+(it relies on the "Rough Order Assumption").
 
 Using the [techniques from BICYCL](https://eprint.iacr.org/2022/1466), and by
-moving to GMP, it should be possible to reduce from 3s to less than 1s per
-party. Further work can be done not only on parallelism, yet subcommittees such
+moving to GMP, it should be possible to reduce the amount of work by ~4x, at
+least. Further work can be done not only on parallelism, yet subcommittees such
 that any individual signer only performs a logarithmic amount of computation to
 the amount of signers.
-
-The signing protocol itself can be further optimized if a hash-to-ciphertext
-exists. `y_i` could be generated via a hash-to-ciphertext, removing the need to
-broadcast it and prove knowledge of its discrete log. Instead of scaling
-`k_ciphertext` and `x_ciphertext` by `y_i`, `y_ciphertext` would be scaled by
-`k_i` (obtained during the DKG) and `x_i`.
 
 If you are interested in this, please feel free to reach out to @kayabaNerve on
 Twitter and Discord, or @kayabanerve:matrix.org on Matrix.
