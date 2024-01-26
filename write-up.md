@@ -191,15 +191,15 @@ proofs relying it serve as proofs of knowledge. The "Strong Root Assumption"
 relies on more than the "Adaptive Root Assumption" while simultaneously having
 less efficient proofs (due to requiring repetition).
 
-- The security of the ECC nonces.
+### The security of the ECC nonces.
 
 The ECC nonce creation lines up with [FROST](https://eprint.iacr.org/2020/852).
 
-- The nonce ciphertexts can be decrypted to perform a key recovery.
+### The nonce ciphertexts can be decrypted to perform a key recovery.
 
 Only by a malicious threshold.
 
-- Concurrent security.
+### Concurrent security.
 
 The signature itself is assumed to have concurrent security as FROST does. There
 is a potential concern the ciphertext decryption process doesn't achieve
@@ -236,7 +236,7 @@ This commentary on bias is likely overengineered, yet besides the security of
 the class group construction itself, is my biggest concern. Accordingly, I'd
 like to be thorough.
 
-- A nonce could be reused.
+### A nonce could be reused.
 
 One of the requirements for the signing protocol prevents this.
 
@@ -252,7 +252,7 @@ they'd need a further `(n / 3) + 1` participants. Accordingly, while the protoco
 `(n / 3) + 1`. This is here documented, and there is no other way to perform a
 decryption (enabling accessing the value incurring nonce reuse).
 
-- The decryption share could have its discrete log recovered.
+### The decryption share could have its discrete log recovered.
 
 https://eprint.iacr.org/2022/1437 is the proven protocol from which the
 threshold decryption process is from.
