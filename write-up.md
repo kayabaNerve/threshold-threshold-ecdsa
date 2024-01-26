@@ -144,7 +144,7 @@ preprocessable, with one of the following requirements:
 
 It proceeds as follows.
 
-1) A set of size equal to `t` perform the following steps.
+1) A set of size at least equal to `t` perform the following steps.
 
     1) Sample `r_a, a, r_b, b`.
     2) `A_i = aE, R_a_i = r_a G, M_a_i = r_a K + aH`.
@@ -152,29 +152,25 @@ It proceeds as follows.
     4) Publish `A_i, B_i, (R_a_i, M_a_i), (R_b_i, M_b_i)` and the two `ECC-CT`
        proofs needed to prove knowledge, validity, and consistency.
 
-2) With the published values from round one and the message, the following
-   steps can be performed.
+2) With at least `t` round one messages whose proofs successfully verify, and
+   the message to sign, the following steps can be performed.
 
-    1) Verify the prior proofs.
-
-    2) Calculate the binding factor `l` by hashing:
+    1) Calculate the binding factor `l` by hashing:
        - The group key
        - The message
        - Every contribution to the nonce, both the ECC points and ciphertexts
          *with who contributed it*
 
-    3) `A = sum(A_i), R_a = sum(R_a_i), M_a = sum(M_a_i)`.
-    4) `B = sum(B_i), R_b = sum(R_b_i), M_b = sum(M_b_i)`.
-    5) `c = H(A + lB, P, message)`.
-    6) `S = (R_a, M_a) + (l R_b, l M_b) + (c P_ciphertext)`.
-
-    7) Publish `k_i S.0`, the decryption share for `S`, with a proof
+    2) `A = sum(A_i), R_a = sum(R_a_i), M_a = sum(M_a_i)`.
+    3) `B = sum(B_i), R_b = sum(R_b_i), M_b = sum(M_b_i)`.
+    4) `c = H(A + lB, P, message)`.
+    5) `S = (R_a, M_a) + (l R_b, l M_b) + (c P_ciphertext)`.
+    6) Publish `k_i S.0`, the decryption share for `S`, with a proof
        `DLEQ(k_i, G, S.0, K_i, decryption_share)` proving its well-formedness.
 
-3) Once `t` parties have published decryption shares, they can be interpolated
-   for anyone to perform decryption of `S`. The resulting value, `s`, forms a
-   Schnorr signature of `(A + lB, s)`. If the signature is invalid, the `DLEQ`
-   proofs are verified to identify the faulty party.
+3) Once `t` parties have published valid decryption shares (per their proofs
+   verifying), they can be interpolated for anyone to perform decryption of `S`.
+   The resulting value, `s`, forms a valid Schnorr signature of `(A + lB, s)`.
 
 ## Practical Comments on Security
 
