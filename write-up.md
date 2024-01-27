@@ -140,6 +140,8 @@ feasible (with caveats) yet this isn't discussed here at this time.
     3) Publish `X_i, (R_x_i, M_x_i)` and the `ECC-CT` proof needed to prove
        knowledge, validity, and consistency.
 
+    This creates the nonce which will be used in the ECDSA signature.
+
 2) A set of size at least equal to `t` perform the following steps once the
    prior round is honestly completed (honesty determined by the proof(s)
    successfully verifying).
@@ -153,6 +155,9 @@ feasible (with caveats) yet this isn't discussed here at this time.
        `RELATIONS` proof for all the ciphertexts, proving their validity and
        consistency (where all sampled secrets are the row of secrets).
 
+    This creates the `y` variable, applied to both the numerator and denominator
+    (to cancel out), which blinds the nonce.
+
 3) A set of size at least equal to `t` perform the following steps once the
    prior round is honestly completed (honesty determined by the proof(s)
    successfully verifying).
@@ -160,6 +165,12 @@ feasible (with caveats) yet this isn't discussed here at this time.
     1) `Y = sum(Y_i_ciphertext), Z = sum(yX_i_ciphertext), D = sum(yP_i_ciphertext)`.
     2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
     3) `mY = message * Y, rD = r * D, W = mY + rD`.
+
+       `W` now holds the numerator of the ECDSA signing equation, multiplied by
+       `y`.
+
+       `Z` holds the denominator, also multiplied by `y`.
+
     4) Publish `k_i Z.0`, `k_i W.0`, the decryption shares for `Z` and `W`,
        with a pair of proofs proving their well-formedness. Specifically,
        `DLEQ(k_i, G, Z.0, K_i, Z_decryption_share)` and
