@@ -5,11 +5,15 @@ threshold encryption.
 
 This achieves a 3-round O(n) (in bandwidth and computational cost) signing
 protocol with identifiable aborts and without a trusted setup (if correct). The
-message only needs to be known by the last round, enabling the first two to be
-preprocessed, yet presumably does not achieve concurrent security if
-preprocessed.
+first two rounds may be preprocessable.
 
 Please see the [write-up](./write-up.md) for more info on the protocol.
+
+For a 2-round non-robust protocol, please see
+https://github.com/kayabaNerve/threshold-threshold-ecdsa/tree/two-round/write-up.md.
+
+For a 2-round robust Schnorr protocol, please see
+https://github.com/kayabaNerve/threshold-threshold-ecdsa/tree/schnorr/write-up.md.
 
 Prior work on fully-linear schemes include
 [Threshold-optimal DSA/ECDSA signatures and an application to Bitcoin wallet security](https://eprint.iacr.org/2016/013),
@@ -26,7 +30,6 @@ orders of magnitude).
 ### What needs to be done before anyone uses this?
 
 - The protocol implemented needs to be formalized and have its security proven.
-- The protocol should be modified to achieve concurrent security.
 - The security parameters used (along with other constants) need review.
 - The code demonstrates signing. Some parts of the DKG are shimmed. Said shims
   would need removal.
@@ -58,11 +61,6 @@ This library does not implement any of the maps described in
 https://eprint.iacr.org/2022/1466, and doesn't have an optimal reduction
 algorithm (always using big integers and never native words for parts). Those
 should be implemented and would further reduce the time from the above ideal.
-
-`y_ciphertext` could theoretically be produced using a hash to ciphertext. This
-would require the participants know shares of `k`, the ECDSA private key, from
-the setup process yet would remove some of the bandwidth/execution at time of
-sign.
 
 ### References
 
