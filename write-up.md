@@ -155,6 +155,9 @@ It proceeds as follows.
     4) Publish `A_i, B_i, (R_a_i, M_a_i), (R_b_i, M_b_i)` and the two `ECC-CT`
        proofs needed to prove knowledge, validity, and consistency.
 
+    This is equivalent to FROST's round 1, yet done within ciphertexts encrypted
+    to the group's key.
+
 2) With at least `t` round one messages whose proofs successfully verify, and
    the message to sign, the following steps can be performed.
 
@@ -164,10 +167,19 @@ It proceeds as follows.
        - Every contribution to the nonce, both the ECC points and ciphertexts
          *with who contributed it*
 
+       This matches FROST.
+
     2) `A = sum(A_i), R_a = sum(R_a_i), M_a = sum(M_a_i)`.
     3) `B = sum(B_i), R_b = sum(R_b_i), M_b = sum(M_b_i)`.
     4) `c = H(A + lB, P, message)`.
+
+       This is the challenge for the Schnorr signature.
+
     5) `S = (R_a, M_a) + (l R_b, l M_b) + (c P_ciphertext)`.
+
+       This is a ciphertext containing the signature's resulting `s`, now solely
+       needing decryption.
+
     6) Publish `k_i S.0`, the decryption share for `S`, with a proof
        `DLEQ(k_i, G, S.0, K_i, decryption_share)` proving its well-formedness.
 
