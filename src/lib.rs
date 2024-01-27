@@ -184,11 +184,12 @@ mod tests {
     let mut r_x_is = vec![];
     let mut X_is = vec![];
     let mut X_i_ciphertexts = vec![];
-    let mut r1_x_proofs = vec![];
+    let mut x_proofs = vec![];
 
     let mut y_is = vec![];
     let mut y_A_is = vec![];
     let mut y_B_is = vec![];
+    let mut y_proofs = vec![];
     for _ in 0 .. THRESHOLD {
       {
         let x_i = <Secp256k1 as Ciphersuite>::F::random(&mut OsRng);
@@ -197,8 +198,10 @@ mod tests {
         let (r_x_i, ciphertext, proof) =
           ZkEncryptionProof::<Secp256k1>::prove(&mut OsRng, &cg, &mut transcript(), &B, &x_i);
         r_x_is.push(r_x_i);
-        X_i_ciphertexts.push(ciphertext.1);
-        r1_x_proofs.push(proof);
+        // Transmit the full ciphertext for the rG component, as needed for the proof
+        // TODO: Create a proof without such an element?
+        X_i_ciphertexts.push(ciphertext);
+        x_proofs.push(proof);
         println!(
           "Proved for X_i: {}",
           std::time::Instant::now().duration_since(segment_time).as_millis()
@@ -219,7 +222,7 @@ mod tests {
         y_A_is.push(&A * &y_i);
         y_B_is.push(&B * &y_i);
         y_is.push(y_i);
-
+        y_proofs.push(proof);
         println!(
           "Proved for y_A_i, y_B_i: {}",
           std::time::Instant::now().duration_since(segment_time).as_millis(),
@@ -228,13 +231,37 @@ mod tests {
       }
     }
 
-    // TODO: Verify prior proofs
+    // Verify prior proofs (x_proofs and y_proofs)
+    let mut verifier = BatchVerifier::new();
+    for (i, proof) in x_proofs.iter().enumerate() {
+      proof
+        .verify(&cg, &mut verifier, &mut transcript(), &B, &X_i_ciphertexts[i], X_is[i])
+        .unwrap();
+    }
+    for (i, proof) in y_proofs.iter().enumerate() {
+      proof
+        .verify(
+          &cg,
+          &mut verifier,
+          &mut transcript(),
+          &cg.secret_bound(),
+          [[(&A).into()], [(&B).into()]],
+          [&y_A_is[i], &y_B_is[i]],
+        )
+        .unwrap();
+    }
+    assert!(verifier.verify());
+    println!(
+      "Verified everyones' y_A_is, y_B_is: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis(),
+    );
+    segment_time = std::time::Instant::now();
 
     // Round 2
     let X = X_is.iter().sum::<<Secp256k1 as Ciphersuite>::G>();
-    let mut X_ciphertext = X_i_ciphertexts.swap_remove(0);
+    let mut X_ciphertext = X_i_ciphertexts.swap_remove(0).1;
     for X_i_ciphertext in X_i_ciphertexts {
-      X_ciphertext = X_ciphertext.add(&X_i_ciphertext);
+      X_ciphertext = X_ciphertext.add(&X_i_ciphertext.1);
     }
     let r_scalar = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
     let r = Natural::from_digits_desc(&256, r_scalar.to_repr().into_iter().map(u16::from)).unwrap();
@@ -324,25 +351,20 @@ mod tests {
     );
     segment_time = std::time::Instant::now();
 
-    // Create and publish the signature
-    let s = ({
+    let to_scalar = |number: Natural| {
       let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
       let bytes_ref: &mut [u8] = bytes.as_mut();
-      let n_bytes =
-        n.to_digits_desc(&256u16).into_iter().map(|b| u8::try_from(b).unwrap()).collect::<Vec<_>>();
-      bytes_ref[(32 - n_bytes.len()) ..].copy_from_slice(&n_bytes);
+      let number_bytes = number
+        .to_digits_desc(&256u16)
+        .into_iter()
+        .map(|b| u8::try_from(b).unwrap())
+        .collect::<Vec<_>>();
+      bytes_ref[(32 - number_bytes.len()) ..].copy_from_slice(&number_bytes);
       <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
-    }) * ({
-      let mut bytes = <<Secp256k1 as Ciphersuite>::F as PrimeField>::Repr::default();
-      let bytes_ref: &mut [u8] = bytes.as_mut();
-      let d_bytes =
-        d.to_digits_desc(&256u16).into_iter().map(|b| u8::try_from(b).unwrap()).collect::<Vec<_>>();
-      bytes_ref[(32 - d_bytes.len()) ..].copy_from_slice(&d_bytes);
-      <Secp256k1 as Ciphersuite>::F::from_repr(bytes).unwrap()
-    })
-    .invert()
-    .unwrap();
+    };
 
+    // Create and publish the signature
+    let s = to_scalar(n) * to_scalar(d).invert().unwrap();
     println!(
       "Signature creation: {}",
       std::time::Instant::now().duration_since(segment_time).as_millis()
