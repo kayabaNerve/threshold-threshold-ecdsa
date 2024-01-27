@@ -116,9 +116,11 @@ interpolatable share `k_i` and verification share `K_i`.
 
 ### Elliptic Curve Key
 
-Set `F = hash_to_point(K.serialize())`.
+Set `A = hash_to_point(K.serialize() || "A")`.
 
-All participants randomly sample `x`. `P_i = xE, M_i = k_i F + xH`.
+Set `B = hash_to_point(K.serialize() || "B")`.
+
+All participants randomly sample `x`. `P_i = xE, M_i = k_i A + xH`.
 
 The key the group signs for is `P = sum(P_i)`. The 'ciphertext' for `P`'s
 discrete logarithm is `P_ciphertext = sum(M_i)` (despite not being a CL15
@@ -151,21 +153,21 @@ at this time.
 1) A set of size at least equal to `t` perform the following steps.
 
     1) Sample `r_x, x`.
-    2) `X_i = xE, R_x_i = r_x G, M_x_i = r_x K + xH`.
-    3) Publish `X_i, (R_x_i, M_x_i)` and the `ECC-CT` proof needed to prove
+    2) `X_i = xE, X_i_ciphertext = r_x B + xH`.
+    3) Publish `X_i, X_i_ciphertext` and the `ECC-CT` proof needed to prove
        knowledge, validity, and consistency.
 
     4) Sample `y_i`.
-    5) `Y_i = y_i K, Y_f_i = y_i F`.
-    6) Publish `Y_i, Y_f_i` with a `RELATIONS` proof proving for the shared
-       discrete logarithm.
+    5) `y_A_i = y_i A, y_B_i = y_i B`.
+    6) Publish `y_A_i, y_B_i` with a `RELATIONS` proof proving for the shared
+       discrete logarithm (or a `DLEQ` proof?).
 
 2) The same set performs the following steps if all prior proofs verify.
 
-    1) `X = sum(X), X_ciphertext = (sum(R_x_i), sum(M_x_i))`.
+    1) `X = sum(X), X_ciphertext = sum(X_i_ciphertext)`.
     2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
 
-    3) Set `Y = sum(Y_i), Y_f = sum(Y_f_i)`.
+    3) Set `y_A = sum(y_A_i), y_B = sum(y_B_i)`.
 
     4) `N_i = y_i (r P_ciphertext + message H)`.
 
@@ -177,14 +179,15 @@ at this time.
        In the ECDSA signing equation, this would be divided by `x`, the nonce.
        We divide it by `x * y` to meet expectations and cancel out the `y` term.
 
-    5) Set `R_N_i = k_i.interpolate() r Y_f`.
+    5) Set `R_N_i = k_i.interpolate() r y_A`.
 
        This, when summed to `R_N`, will be the `F` component of `N`.
 
-    6) `D_i = y_i X`.
-    7) Set `R_D_i = r_x Y`.
+    6) `D_i = y_i X_ciphertext`.
+    7) Set `R_D_i = r_x y_B`.
 
-    8) Publish `N_i, R_N_i, D_i, R_D_i` with a `RELATIONS` proof.
+    8) Publish `N_i, R_N_i, D_i, R_D_i` with a `RELATIONS` proof (or series of
+       `DLEQ` proofs?).
 
 3) The same set performs the following steps if all prior proofs verify.
 
