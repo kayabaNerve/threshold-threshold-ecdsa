@@ -120,8 +120,9 @@ Set `F = hash_to_point(K.serialize())`.
 
 All participants randomly sample `x`. `P_i = xE, M_i = k_i F + xH`.
 
-The key the group signs for is `P = sum(P_i)`. The ciphertext for `P`'s discrete
-logarithm is `P_ciphertext = sum(M_i)` (despite not being a CL15 ciphertext).
+The key the group signs for is `P = sum(P_i)`. The 'ciphertext' for `P`'s
+discrete logarithm is `P_ciphertext = sum(M_i)` (despite not being a CL15
+ciphertext).
 
 ## Signing
 
@@ -156,20 +157,34 @@ at this time.
 
     4) Sample `y_i`.
     5) `Y_i = y_i K, Y_f_i = y_i F`.
-    6) Publish `Y_i, Y_f_i` with a `RELATIONS` proof proving consistency.
+    6) Publish `Y_i, Y_f_i` with a `RELATIONS` proof proving for the shared
+       discrete logarithm.
 
 2) The same set performs the following steps if all prior proofs verify.
 
     1) `X = sum(X), X_ciphertext = (sum(R_x_i), sum(M_x_i))`.
     2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
-    3) `N_i = y_i (r P_ciphertext + message H)`.
-    4) `D_i = y_i X`.
-    5) Publish `N_i, D_i` with a `RELATIONS` proof.
-    6) Set `Y = sum(Y_i)`.
+
+    3) Set `Y = sum(Y_i), Y_f = sum(Y_f_i)`.
+
+    4) `N_i = y_i (r P_ciphertext + message H)`.
+
+       This is a ciphertext for `m + rd`, where `d` is the private key, which is
+       a piece of the ECDSA signing equation (yet further multiplied by a share
+       of `y`). This causes the sum, `N`, to be the signing equation multiplied
+       by `y`.
+
+       In the ECDSA signing equation, this would be divided by `x`, the nonce.
+       We divide it by `x * y` to meet expectations and cancel out the `y` term.
+
+    5) Set `R_N_i = k_i.interpolate() r Y_f`.
+
+       This, when summed to `R_N`, will be the `G` component of `N`.
+
+    6) `D_i = y_i X`.
     7) Set `R_D_i = r_x Y`.
-    8) Set `Y_f = sum(Y_f_i)`.
-    9) Set `R_N_i = k_i.interpolate() r Y_f`
-    10) Publish `R_N_i, D_i` with a `RELATIONS` proof.
+
+    8) Publish `N_i, R_N_i, D_i, R_D_i` with a `RELATIONS` proof.
 
 3) The same set performs the following steps if all prior proofs verify.
 
