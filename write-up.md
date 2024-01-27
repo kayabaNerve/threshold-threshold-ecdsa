@@ -149,7 +149,7 @@ value, yet of a value scaled by another value.
 Instead of decrypting `xy` and decrypting `my + ryp`, we decrypt `x` scaled by
 `y` and `m + rp` scaled by `y` (without revealing `x` or `m + rp`).
 
-Threshold scaled decryption works by
+Threshold scaled decryption works by:
 1) Have a ciphertext `rGmH` (summed from `r_i G m_i H`) and scalar commitment
    `s_i G`.
 2) Sum `s_i G` to `S`.
@@ -183,19 +183,26 @@ at this time.
     4) `N_i = y_i (r P_ciphertext + message H)`.
 
        This is a ciphertext for `m + rd`, where `d` is the private key, which is
-       a piece of the ECDSA signing equation (yet further multiplied by a share
-       of `y`). This causes the sum, `N`, to be the signing equation multiplied
-       by `y`.
-
-       In the ECDSA signing equation, this would be divided by `x`, the nonce.
-       We divide it by `x * y` to meet expectations and cancel out the `y` term.
+       the numerator of the ECDSA signing equation, further multiplied by a
+       share of `y`. This causes the sum, `N`, to be the signing equation's
+       numerator multiplied by `y`.
 
     5) Set `R_N_i = k_i.interpolate() r y_A`.
 
-       This, when summed to `R_N`, will be the `F` component of `N`.
+       This, once summed to `R_N`, will be the `F` component of `N`.
 
     6) `D_i = y_i X_ciphertext`.
+
+       `X_ciphertext` is a ciphertext of the nonce, which is the denominator of
+       the ECDSA signing equation. In order to blind it when it's decrypted,
+       it's multiplied by `y`.
+
+       This will cancel out when applied to our numerator, also multiplied by
+       `y`.
+
     7) Set `R_D_i = r_x_i y_B`.
+
+       This, once summed to `R_D`, will be the `F` component of `D`.
 
     8) Publish `N_i, R_N_i, D_i, R_D_i` with `DLEQ` proofs:
         - `DLEQ(y_i, A, r P_ciphertext + message H, y_A_i, N_i)`
@@ -203,7 +210,8 @@ at this time.
         - `DLEQ(y_i, A, X_ciphertext, y_A_i, D_i)`
         - `DLEQ(r_x_i, G, y_B, X_i_ciphertext.0, R_D_i)`
 
-3) The same set performs the following steps if all prior proofs verify.
+3) If all prior proofs verify, any party may decrypt and calculate the
+   signature.
 
     1) `N = sum(N_i), R_N = sum(R_N_i)`.
     3) Set `n` to the discrete log of `N - R_N`.
