@@ -1,10 +1,8 @@
-# 67-of-100 Threshold ECDSA in <3s
-
-Implemented at https://github.com/kayabaNerve/threshold-threshold-ecdsa.
+# 2-round Threshold ECDSA
 
 ## Background
 
-The protocol relies on [CL15](ttps://eprint.iacr.org/2015/047)'s homormorphic
+The protocol relies on [CL15](https://eprint.iacr.org/2015/047)'s homormorphic
 encryption scheme constructed via class groups of unknown order. In a brief
 summary, class groups of unknown order can be created with a subgroup where the
 discrete log problem is easy (hereafter solely referred to as the subgroup).
@@ -116,22 +114,38 @@ commitments (MuSig-aggregated) is instead used.
 This yields a threshold encryption key `K` with each participant having a
 interpolatable share `k_i` and verification share `K_i`.
 
-Decryption of a ciphertext is performed by acquiring `t` decryption shares
-(each `k_i * rG`) and interpolating them, using the result in place of `krG`
-within the standard decryption process.
-
 ### Elliptic Curve Key
 
-All participants randomly sample `r, x`. `P_i = xE, R_i = rG, M_i = rK + xH`.
+Set `F = hash_to_point(K.serialize())`.
+
+All participants randomly sample `x`. `P_i = xE, M_i = k_i F + xH`.
 
 The key the group signs for is `P = sum(P_i)`. The ciphertext for `P`'s discrete
-logarithm is `P_ciphertext = (sum(R_i), sum(M_i))`.
+logarithm is `P_ciphertext = sum(M_i)` (despite not being a CL15 ciphertext).
 
 ## Signing
 
-Signing is described as a robust 3-round protocol with identifiable aborts.
-Preprocessing of the first two rounds, or pipelining of the first round, may be
-feasible (with caveats) yet this isn't discussed here at this time.
+This protocol was derived from the 3-round protocol posited
+[here](https://github.com/kayabaNerve/threshold-threshold-ecdsa/tree/develop/write-up.md).
+
+It was observed the above protocol could have the latter two rounds combined
+(decryption and multiplication by `y`) using a new technique,
+"threshold scaled decryption". This refers to threshold decryption not of a
+value, yet of a value scaled by another value.
+
+Instead of decrypting `xy` and decrypting `my + ryp`, we decrypt `x` scaled by
+`y` and `m + rp` scaled by `y` (without revealing `x` or `m + rp`).
+
+Threshold scaled decryption works by
+1) Have a ciphertext `rGmH` (summed from `r_i G m_i H`) and scalar commitment
+   `s_i G`.
+2) Sum `s_i G` to `S`.
+3) Publish `s_i ciphertext` and `r_i S`.
+4) Decrypt with `sum(r_i S).`
+
+Signing is described as a 2-round protocol with identifiable aborts.
+Preprocessing of the first round may be feasible yet this isn't discussed here
+at this time.
 
 1) A set of size at least equal to `t` perform the following steps.
 
@@ -140,51 +154,42 @@ feasible (with caveats) yet this isn't discussed here at this time.
     3) Publish `X_i, (R_x_i, M_x_i)` and the `ECC-CT` proof needed to prove
        knowledge, validity, and consistency.
 
-2) A set of size at least equal to `t` perform the following steps once the
-   prior round is honestly completed (honesty determined by the proof(s)
-   successfully verifying).
+    4) Sample `y_i`.
+    5) `Y_i = y_i K, Y_f_i = y_i F`.
+    6) Publish `Y_i, Y_f_i` with a `RELATIONS` proof proving consistency.
+
+2) The same set performs the following steps if all prior proofs verify.
 
     1) `X = sum(X), X_ciphertext = (sum(R_x_i), sum(M_x_i))`.
-    2) Sample `r_y, y, r_yx, r_yp`.
-    3) `Y_i_ciphertext = (r_y G, r_y K + yH)`.
-    4) `yX_i_ciphertext = (y X_ciphertext.0 + r_yx G, y X_ciphertext.1 + r_yx K)`
-    5) `yP_i_ciphertext = (y P_ciphertext.0 + r_yp G, y P_ciphertext.1 + r_yp K)`
-    6) Publish `Y_i_ciphertext, yX_i_ciphertext, yP_i_ciphertext`, and a
-       `RELATIONS` proof for all the ciphertexts, proving their validity and
-       consistency (where all sampled secrets are the row of secrets).
-
-3) A set of size at least equal to `t` perform the following steps once the
-   prior round is honestly completed (honesty determined by the proof(s)
-   successfully verifying).
-
-    1) `Y = sum(Y_i_ciphertext), Z = sum(yX_i_ciphertext), D = sum(yP_i_ciphertext)`.
     2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
-    3) `mY = message * Y, rD = r * D, W = mY + rD`.
-    4) Publish `k_i Z.0`, `k_i W.0`, the decryption shares for `Z` and `W`,
-       with a pair of proofs proving their well-formedness. Specifically,
-       `DLEQ(k_i, G, Z.0, K_i, Z_decryption_share)` and
-       `DLEQ(k_i, G, W.0, K_i, W_decryption_share)`.
+    3) `N_i = y_i (r P_ciphertext + message H)`.
+    4) `D_i = y_i X`.
+    5) Publish `N_i, D_i` with a `RELATIONS` proof.
+    6) Set `Y = sum(Y_i)`.
+    7) Set `R_D_i = r_x Y`.
+    8) Set `Y_f = sum(Y_f_i)`.
+    9) Set `R_N_i = k_i.interpolate() r Y_f`
+    10) Publish `R_N_i, D_i` with a `RELATIONS` proof.
 
-4) Once `t` parties have published valid decryption shares (as determined by the
-   proofs verifying successfully), they can be interpolated for anyone to
-   perform decryption of `Z` and `W`. The resulting values, `z` and `w`, form a
-   valid ECDSA signature of `(r, w / z)`.
+3) The same set performs the following steps if all prior proofs verify.
 
-threshold-threshold-ecdsa implements the above signing protocol (with an
-additional commitment, sacrificing robustness for a notion of additional
-security) and achieves 67-of-100 signing in less than 3s per party
-(2GHz 12th Gen Intel, single thread).
+    1) `N = sum(N_i), R_N = sum(R_N_i)`.
+    3) Set `n` to the discrete log of `N - R_N`.
+    4) `D = sum(D_i), R_D = sum(R_D_i)`.
+    5) Set `d` to the discrete log of `D - R_D`.
+
+The valid ECDSA signature is `(r, n / d)`.
 
 ## Future Work
 
 Obviously, the above composition needs its security formalized and proven. It is
 in no way claimed to be currently secure.
 
-I would not be surprised if it ends up needing a commitment, sacrificing
-robustness, or if it needs a binomial nonce like FROST. It does have the
-advantage of never transmitting/revealing any scalars, solely points/elements,
-until the final signature is revealed. Ideally, that ensures all of this is ZK
-and helps ensure unforgeability of signatures.
+I would not be surprised if it ends up needing a commitment, or if it needs a
+binomial nonce like FROST. It does have the advantage of never
+transmitting/revealing any scalars, solely points/elements, until the final
+signature is revealed. Ideally, that ensures all of this is ZK and helps ensure
+unforgeability of signatures.
 
 The library itself needs to be moved from being a proof of concept to a proper
 production library. With this needs to be compensation for the fact it's
