@@ -1,5 +1,8 @@
 # 2-round Threshold ECDSA
 
+Implemented at
+https://github.com/kayabaNerve/threshold-threshold-ecdsa/tree/two-round.
+
 ## Background
 
 The protocol relies on [CL15](https://eprint.iacr.org/2015/047)'s homormorphic
@@ -154,7 +157,7 @@ at this time.
 1) A set of size at least equal to `t` perform the following steps.
 
     1) Sample `r_x_i, x_i`.
-    2) `X_i = xE, X_i_ciphertext = r_x_i B + x_i H`.
+    2) `X_i = xE, X_i_ciphertext = (r_x_i G, r_x_i B + x_i H)`.
     3) Publish `X_i, X_i_ciphertext` and the `ECC-CT` proof needed to prove
        knowledge, validity, and consistency.
 
@@ -162,12 +165,11 @@ at this time.
 
     4) Sample `y_i`.
     5) `y_A_i = y_i A, y_B_i = y_i B`.
-    6) Publish `y_A_i, y_B_i` with a `RELATIONS` proof proving for the shared
-       discrete logarithm (or a `DLEQ` proof?).
+    6) Publish `y_A_i, y_B_i` with a `DLEQ` proof.
 
 2) The same set performs the following steps if all prior proofs verify.
 
-    1) `X = sum(X), X_ciphertext = sum(X_i_ciphertext)`.
+    1) `X = sum(X), X_ciphertext = sum(X_i_ciphertext.1)`.
     2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
 
     3) Set `y_A = sum(y_A_i), y_B = sum(y_B_i)`.
@@ -189,8 +191,11 @@ at this time.
     6) `D_i = y_i X_ciphertext`.
     7) Set `R_D_i = r_x_i y_B`.
 
-    8) Publish `N_i, R_N_i, D_i, R_D_i` with a `RELATIONS` proof (or series of
-       `DLEQ` proofs?).
+    8) Publish `N_i, R_N_i, D_i, R_D_i` with `DLEQ` proofs:
+        - `DLEQ(y_i, A, r P_ciphertext + message H, y_A_i, N_i)`
+        - `DLEQ(k_i.interpolate(), G, r y_A, verification_share.interpolate(), R_N_i)`
+        - `DLEQ(y_i, A, X_ciphertext, y_A_i, D_i)`
+        - `DLEQ(r_x_i, G, y_B, X_i_ciphertext.0, R_D_i)`
 
 3) The same set performs the following steps if all prior proofs verify.
 
@@ -215,8 +220,8 @@ unforgeability of signatures.
 The library itself needs to be moved from being a proof of concept to a proper
 production library. With this needs to be compensation for the fact it's
 variable time (sufficient masking and/or moving proving to constant time) and
-auditing. The currently implemented `RELATIONS` proof must also be corrected
-(it relies on the "Rough Order Assumption").
+auditing. The currently implemented `RELATIONS` proof (used for `DLEQ`) must
+also be corrected (it relies on the "Rough Order Assumption").
 
 Using the [techniques from BICYCL](https://eprint.iacr.org/2022/1466), and by
 moving to GMP, it should be possible to reduce the amount of work by ~4x, at
