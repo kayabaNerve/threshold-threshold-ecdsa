@@ -1,8 +1,11 @@
 # 2-round Robust Threshold Schnorr with Linear Signing Complexity
 
+Implemented at
+https://github.com/kayabaNerve/threshold-threshold-ecdsa/tree/schnorr/write-up.md.
+
 ## Background
 
-The protocol relies on [CL15](ttps://eprint.iacr.org/2015/047)'s homormorphic
+The protocol relies on [CL15](https://eprint.iacr.org/2015/047)'s homormorphic
 encryption scheme constructed via class groups of unknown order. In a brief
 summary, class groups of unknown order can be created with a subgroup where the
 discrete log problem is easy (hereafter solely referred to as the subgroup).

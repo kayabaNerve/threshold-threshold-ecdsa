@@ -12,7 +12,7 @@ decryption key.
 
 Please see the
 [develop branch](https://github.com/kayabaNerve/threshold-threshold-ecdsa) for
-a rougher protocol targeting ECDSA and its
+a protocol targeting ECDSA and its
 [README](https://github.com/kayabaNerve/threshold-threshold-ecdsa/tree/develop/README.md)
 which provides more context on the state of this library.
 
