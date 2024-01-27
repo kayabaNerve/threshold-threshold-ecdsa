@@ -128,7 +128,7 @@ mod tests {
     }
     let delta = delta.unwrap();
     let delta_square = delta.clone().pow(2);
-    let public_key_table = public_key.large_table();
+    let _public_key_table = public_key.large_table();
 
     let mut k_is = HashMap::new();
     for i in 1u16 ..= PARTICIPANTS {
@@ -259,8 +259,8 @@ mod tests {
 
     // Round 2
     let X = X_is.iter().sum::<<Secp256k1 as Ciphersuite>::G>();
-    let mut X_ciphertext = X_i_ciphertexts.swap_remove(0).1;
-    for X_i_ciphertext in X_i_ciphertexts {
+    let mut X_ciphertext = X_i_ciphertexts[0].clone().1;
+    for X_i_ciphertext in &X_i_ciphertexts[1 ..] {
       X_ciphertext = X_ciphertext.add(&X_i_ciphertext.1);
     }
     let r_scalar = <Secp256k1 as Ciphersuite>::F::from_repr(X.to_affine().x()).unwrap();
@@ -271,13 +271,13 @@ mod tests {
     );
     segment_time = std::time::Instant::now();
 
-    let mut y_A = y_A_is.swap_remove(0);
-    for y_A_i in y_A_is {
-      y_A = y_A.add(&y_A_i);
+    let mut y_A = y_A_is[0].clone();
+    for y_A_i in &y_A_is[1 ..] {
+      y_A = y_A.add(y_A_i);
     }
-    let mut y_B = y_B_is.swap_remove(0);
-    for y_B_i in y_B_is {
-      y_B = y_B.add(&y_B_i);
+    let mut y_B = y_B_is[0].clone();
+    for y_B_i in &y_B_is[1 ..] {
+      y_B = y_B.add(y_B_i);
     }
     println!(
       "Calculated y_A and y_B: {}",
@@ -295,6 +295,7 @@ mod tests {
     let mut R_N_is = vec![];
     let mut D_is = vec![];
     let mut R_D_is = vec![];
+    let mut num_denom_proofs = vec![];
     for i in 1 ..= THRESHOLD {
       // Calculate the literal shares
       let k_i_interpolated = &k_is[&i] * &delta;
@@ -317,25 +318,112 @@ mod tests {
       );
       segment_time = std::time::Instant::now();
 
-      // TODO: Proof for the above
+      // Prove the above
+      #[rustfmt::skip]
+      let proof = ZkRelationProof::prove(
+        &mut OsRng,
+        &cg,
+        &mut transcript(),
+        [
+          // y_A_i, N_i, D_i
+          [(&A).into(),            cg.identity().into(),    cg.identity().into()],
+          [(&N).into(),            cg.identity().into(),    cg.identity().into()],
+          [(&X_ciphertext).into(), cg.identity().into(),    cg.identity().into()],
+          // R_N_i, interpolated verification share
+          [cg.identity().into(),   (&(y_A.mul(&r))).into(), cg.identity().into()],
+          [cg.identity().into(),   cg.g_table().into(),     cg.identity().into()],
+          // X_i_ciphertexts[i].0, R_D_i
+          [cg.identity().into(),   cg.identity().into(),    cg.g_table().into()],
+          [cg.identity().into(),   cg.identity().into(),    (&y_B).into()],
+        ],
+        [&y_is[usize::from(i - 1)], &k_i_interpolated, &r_x_is[usize::from(i - 1)]],
+      );
+      num_denom_proofs.push(proof);
+      println!(
+        "Proved for N_i, R_N_i, D_i, R_D_i: {}",
+        std::time::Instant::now().duration_since(segment_time).as_millis()
+      );
+      segment_time = std::time::Instant::now();
     }
 
+    // Verify the numerator and denominator variables
+    // This can be delayed until after the signature fails to verify, and skipped if it verifies
+    let mut verifier = BatchVerifier::new();
+    let y_A_r = y_A.mul(&r);
+
+    let mut lagranges = vec![];
+    let mut lagranged_shares = vec![];
+    let mut proof_R_N_is = vec![];
+    for i in 0 .. num_denom_proofs.len() {
+      let lagrange =
+        IntegerSecretSharing::lagrange(PARTICIPANTS, u16::try_from(i + 1).unwrap(), &set);
+      let mut proof_R_N_i = R_N_is[i].clone();
+      let verification_share =
+        verification_shares[&u16::try_from(i + 1).unwrap()].mul(&lagrange.clone().unsigned_abs());
+      if lagrange.sign() == Ordering::Less {
+        proof_R_N_i = proof_R_N_i.neg();
+      }
+      lagranges.push(lagrange);
+      lagranged_shares.push(verification_share);
+      proof_R_N_is.push(proof_R_N_i);
+    }
+
+    for (i, proof) in num_denom_proofs.iter().enumerate() {
+      let share_max_size = Natural::ONE <<
+        (IntegerSecretSharing::share_size(&cg, THRESHOLD, PARTICIPANTS) +
+          delta.significant_bits() +
+          lagranges[i].significant_bits());
+
+      #[rustfmt::skip]
+      proof
+        .verify(
+          &cg,
+          &mut verifier,
+          &mut transcript(),
+          &share_max_size.max(cg.secret_bound()),
+          [
+            // y_A_i, N_i, D_i
+            [(&A).into(),            cg.identity().into(), cg.identity().into()],
+            [(&N).into(),            cg.identity().into(), cg.identity().into()],
+            [(&X_ciphertext).into(), cg.identity().into(), cg.identity().into()],
+            // R_N_i, interpolated verification share
+            [cg.identity().into(),   (&y_A_r).into(),      cg.identity().into()],
+            [cg.identity().into(),   cg.g_table().into(),  cg.identity().into()],
+            // X_i_ciphertexts[i].0, R_D_i
+            [cg.identity().into(),   cg.identity().into(), cg.g_table().into()],
+            [cg.identity().into(),   cg.identity().into(), (&y_B).into()],
+          ],
+          [
+            &y_A_is[i], &N_is[i], &D_is[i],
+            &proof_R_N_is[i], &lagranged_shares[i],
+            &X_i_ciphertexts[i].0, &R_D_is[i],
+          ],
+        )
+        .unwrap();
+    }
+    assert!(verifier.verify());
+    println!(
+      "Verified everyones' numerator/denominator variables: {}",
+      std::time::Instant::now().duration_since(segment_time).as_millis(),
+    );
+    segment_time = std::time::Instant::now();
+
     // Completion
-    let mut N = N_is.swap_remove(0);
-    for N_i in N_is {
-      N = N.add(&N_i);
+    let mut N = N_is[0].clone();
+    for N_i in &N_is[1 ..] {
+      N = N.add(N_i);
     }
-    let mut R_N = R_N_is.swap_remove(0);
-    for R_N_i in R_N_is {
-      R_N = R_N.add(&R_N_i);
+    let mut R_N = R_N_is[0].clone();
+    for R_N_i in &R_N_is[1 ..] {
+      R_N = R_N.add(R_N_i);
     }
-    let mut D = D_is.swap_remove(0);
-    for D_i in D_is {
-      D = D.add(&D_i);
+    let mut D = D_is[0].clone();
+    for D_i in &D_is[1 ..] {
+      D = D.add(D_i);
     }
-    let mut R_D = R_D_is.swap_remove(0);
-    for R_D_i in R_D_is {
-      R_D = R_D.add(&R_D_i);
+    let mut R_D = R_D_is[0].clone();
+    for R_D_i in &R_D_is[1 ..] {
+      R_D = R_D.add(R_D_i);
     }
     println!(
       "Summed ciphertexts and decryption shares: {}",
