@@ -120,7 +120,8 @@ Set `A = hash_to_point(K.serialize() || "A")`.
 
 Set `B = hash_to_point(K.serialize() || "B")`.
 
-All participants randomly sample `x`. `P_i = xE, M_i = k_i A + xH`.
+All participants randomly sample `x`.
+`P_i = xE, M_i = k_i.interpolate() A + xH`.
 
 The key the group signs for is `P = sum(P_i)`. The 'ciphertext' for `P`'s
 discrete logarithm is `P_ciphertext = sum(M_i)` (despite not being a CL15
@@ -152,10 +153,12 @@ at this time.
 
 1) A set of size at least equal to `t` perform the following steps.
 
-    1) Sample `r_x, x`.
-    2) `X_i = xE, X_i_ciphertext = r_x B + xH`.
+    1) Sample `r_x_i, x_i`.
+    2) `X_i = xE, X_i_ciphertext = r_x_i B + x_i H`.
     3) Publish `X_i, X_i_ciphertext` and the `ECC-CT` proof needed to prove
        knowledge, validity, and consistency.
+
+       This forms the nonce for the ECDSA signature.
 
     4) Sample `y_i`.
     5) `y_A_i = y_i A, y_B_i = y_i B`.
@@ -184,7 +187,7 @@ at this time.
        This, when summed to `R_N`, will be the `F` component of `N`.
 
     6) `D_i = y_i X_ciphertext`.
-    7) Set `R_D_i = r_x y_B`.
+    7) Set `R_D_i = r_x_i y_B`.
 
     8) Publish `N_i, R_N_i, D_i, R_D_i` with a `RELATIONS` proof (or series of
        `DLEQ` proofs?).
