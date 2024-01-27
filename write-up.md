@@ -179,7 +179,7 @@ at this time.
 
     5) Set `R_N_i = k_i.interpolate() r Y_f`.
 
-       This, when summed to `R_N`, will be the `G` component of `N`.
+       This, when summed to `R_N`, will be the `F` component of `N`.
 
     6) `D_i = y_i X`.
     7) Set `R_D_i = r_x Y`.
