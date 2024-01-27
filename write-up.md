@@ -47,7 +47,15 @@ Three ZK proofs are needed.
 
     Prove knowledge of `x` and for the relation `A = xG`.
 
-2) `ECC-CT(r, x, E, G, H, K, P, R, M)`
+2) `DLEQ(x, F, G, A, B)`
+    - `x`: An integer
+    - `F`, `G`: Elements of the class group without a known relation to the
+                prover
+    - `A`, `B`: Elements of the class group
+
+    Prove knowledge of `x` and for the relations `A = xF, B = xG`
+
+3) `ECC-CT(r, x, E, G, H, K, P, R, M)`
     - `r`: An integer
     - `x`: A scalar for the order of the subgroup
     - `E`: A generator of an elliptic curve whose order is equivalent to the
@@ -64,24 +72,22 @@ Three ZK proofs are needed.
     This proves that the ciphertext is a valid encryption of the point's
     discrete logarithm to the specified public key.
 
-3) `RELATIONS(G, s, O)`
-    - `G`: A matrix of elements of size `m * n`.
-    - `s`: A row of integers of length `n`.
-    - `O`: A column of elements of length `m`.
+We additionally discuss a proof `RELATIONS` which proves for a matrix of
+elements and a row of secrets, an output column of elements is the result of a
+multiexp of each row of elements by the row of secrets. Such a proof naturally
+offers `DLOG` (matrix `[[G]]`, secrets `[x]`) and
+`DLEQ` (matrix `[[F], [G]]`, secrets `[x]`).
 
-    Prove knowledge of `s` and for the relations
-    `O_i = sum(G[i] * s) for i in 0 .. m`.
+A proof of ciphertext validity (`CT`) would be matrix `[[G, Identity], [K, H]]`
+with row of secrets `[r, x]` (producing ciphertext `[rG, rK + xH]`). `ECC-CT` is
+presumed to be a trivial extension from there.
 
-The first proof immediately resolves to the third with a matrix of `[[G]]`. The
-second proof is likely a trivial extension over the third proof. If preferable,
-more specific proofs (with better performance or better assumptions) may be used
-however.
-
-https://eprint.iacr.org/2021/205 provides candidates for `DLOG` and `ECC-CT`.
-Their provided proofs seem to be already-specified instantiations of a
-`RELATIONS` proof they didn't include. With `RELATIONS` being reconstituted,
-all proofs are satisfied. The only assumption introduced is their
-"Adaptive Root Assumption", which they compare to the "RSA Assumption".
+https://eprint.iacr.org/2021/205 provides candidates for `DLOG` and `ECC-CT`,
+yet not `DLEQ`. Their provided proofs seem to be already-specified
+instantiations of a `RELATIONS` proof they didn't include. With `RELATIONS`
+being reconstituted and used to derive `DLEQ`, all proofs are satisfied. The
+only assumption introduced is their "Adaptive Root Assumption", which they
+compare to the "RSA Assumption".
 
 https://eprint.iacr.org/2022/1437 provides a candidate for `RELATIONS`. Their
 proof doesn't offer a proof of knowledge and relies on the
