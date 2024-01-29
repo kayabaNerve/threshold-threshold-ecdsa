@@ -142,16 +142,27 @@ feasible (with caveats) yet this isn't discussed here at this time.
 
     This creates the nonce which will be used in the ECDSA signature.
 
+    4) Sample `r_sub_x, sub_x`.
+    5) `R_sub_x_i = r_sub_x G, M_sub_x_i = r_sub_x K + sub_x H`.
+    6) Publish `(R_sub_x_i, M_sub_x_i)` and the `RELATIONS` proof needed to
+       prove it's well-formed.
+
 2) A set of size at least equal to `t` perform the following steps once the
    prior round is honestly completed (honesty determined by the proof(s)
    successfully verifying).
 
-    1) `X = sum(X), X_ciphertext = (sum(R_x_i), sum(M_x_i))`.
-    2) Sample `r_y, y, r_yx, r_yp`.
-    3) `Y_i_ciphertext = (r_y G, r_y K + yH)`.
-    4) `yX_i_ciphertext = (y X_ciphertext.0 + r_yx G, y X_ciphertext.1 + r_yx K)`
-    5) `yP_i_ciphertext = (y P_ciphertext.0 + r_yp G, y P_ciphertext.1 + r_yp K)`
-    6) Publish `Y_i_ciphertext, yX_i_ciphertext, yP_i_ciphertext`, and a
+    1) `pre_X = sum(X), pre_X_ciphertext = (sum(R_x_i), sum(M_x_i))`.
+
+    2) `sub_X_ciphertext = (sum(R_sub_x_i), sum(M_x_i))`.
+    3) Publish a decryption share for `sub_X_ciphertext` with a proof it's
+       well-formed.
+
+    4) Sample `r_y, y, r_yx, r_yp`.
+    5) `Y_i_ciphertext = (r_y G, r_y K + yH)`.
+    6) `yX_i_ciphertext = (y pre_X_ciphertext.0 + r_yx G, y pre_X_ciphertext.1 + r_yx K)`
+    7) `y_sub_X_i_ciphertext = (y sub_X_ciphertext.0 + r_yx G, y sub_X_ciphertext.1 + r_yx K)`
+    8) `yP_i_ciphertext = (y P_ciphertext.0 + r_yp G, y P_ciphertext.1 + r_yp K)`
+    9) Publish `Y_i_ciphertext, yX_i_ciphertext, y_sub_X_i_ciphertext, yP_i_ciphertext`, and a
        `RELATIONS` proof for all the ciphertexts, proving their validity and
        consistency (where all sampled secrets are the row of secrets).
 
@@ -162,16 +173,17 @@ feasible (with caveats) yet this isn't discussed here at this time.
    prior round is honestly completed (honesty determined by the proof(s)
    successfully verifying).
 
-    1) `Y = sum(Y_i_ciphertext), Z = sum(yX_i_ciphertext), D = sum(yP_i_ciphertext)`.
-    2) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
-    3) `mY = message * Y, rD = r * D, W = mY + rD`.
+    1) `Y = sum(Y_i_ciphertext), Z = sum(yX_i_ciphertext) - sum(y_sub_X_i_ciphertext), D = sum(yP_i_ciphertext)`.
+    2) Decrypt `sub_X_ciphertext` to `sub_x`. Set `X` = `pre_X - sub_X G`.
+    3) `r = X.coordinates().x % p`, where `p` is the order of the scalar field.
+    4) `mY = message * Y, rD = r * D, W = mY + rD`.
 
        `W` now holds the numerator of the ECDSA signing equation, multiplied by
        `y`.
 
        `Z` holds the denominator, also multiplied by `y`.
 
-    4) Publish `k_i Z.0`, `k_i W.0`, the decryption shares for `Z` and `W`,
+    5) Publish `k_i Z.0`, `k_i W.0`, the decryption shares for `Z` and `W`,
        with a pair of proofs proving their well-formedness. Specifically,
        `DLEQ(k_i, G, Z.0, K_i, Z_decryption_share)` and
        `DLEQ(k_i, G, W.0, K_i, W_decryption_share)`.
