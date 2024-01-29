@@ -189,7 +189,7 @@ at this time.
 
     5) Set `R_N_i = k_i.interpolate() r y_A`.
 
-       This, once summed to `R_N`, will be the `F` component of `N`.
+       This, once summed to `R_N`, will be the `A` component of `N`.
 
     6) `D_i = y_i X_ciphertext`.
 
@@ -202,7 +202,7 @@ at this time.
 
     7) Set `R_D_i = r_x_i y_B`.
 
-       This, once summed to `R_D`, will be the `F` component of `D`.
+       This, once summed to `R_D`, will be the `B` component of `D`.
 
     8) Publish `N_i, R_N_i, D_i, R_D_i` with `DLEQ` proofs:
         - `DLEQ(y_i, A, r P_ciphertext + message H, y_A_i, N_i)`
@@ -219,6 +219,13 @@ at this time.
     5) Set `d` to the discrete log of `D - R_D`.
 
 The valid ECDSA signature is `(r, n / d)`.
+
+Instead of verifying the round two proofs, the resulting ECDSA signature may be
+verified. If valid, the proofs may be assumed true. If invalid, the proofs may
+be verified to identify the faulty party.
+
+This limits the proofs verified in the success path to solely the `ECC-CT` and
+`DLEQ` proofs from round one.
 
 ## Future Work
 
